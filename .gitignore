@@ -1,0 +1,16 @@
+# local environment / credentials
+.env
+.ironman.env
+.venv/
+__pycache__/
+*.pyc
+
+# personal data — never commit real training data
+dashboard/dashboard.html
+dashboard/.lakeview_id
+*.csv
+export.zip
+export.xml
+training.db
+
+.DS_Store
