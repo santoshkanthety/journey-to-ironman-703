@@ -76,6 +76,8 @@ ranked AS (
     FROM activities a
     JOIN bands b ON a.distance_m >= b.meters * 0.98
     WHERE a.sport = 'run' AND a.moving_s > 0 AND a.distance_m > 0
+      -- plausible-pace guard: 3:15–12:00 /km; faster = mistagged ride / GPS error
+      AND a.moving_s / (a.distance_m / 1000.0) BETWEEN 195 AND 720
 )
 SELECT band, meters, year, date, title,
        ROUND(distance_m / 1000.0, 2)  AS run_km,
