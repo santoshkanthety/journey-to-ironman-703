@@ -39,18 +39,19 @@ def rows(con, sql, keys):
 
 
 def fetch(con):
+    # distances converted to miles at the query edge; storage stays metric
     plan = rows(con, """
         SELECT week_num, phase, start_date::text, planned_hours, planned_tss,
-               swim_m, bike_km, run_km, long_ride_min, long_run_min,
-               is_recovery, focus, key_workouts
+               swim_m, ROUND(bike_km / 1.609344, 1), ROUND(run_km / 1.609344, 1),
+               long_ride_min, long_run_min, is_recovery, focus, key_workouts
         FROM weekly_plan ORDER BY week_num""",
-        ["week", "phase", "start", "hours", "tss", "swim_m", "bike_km", "run_km",
+        ["week", "phase", "start", "hours", "tss", "swim_m", "bike_mi", "run_mi",
          "long_ride", "long_run", "recovery", "focus", "key"])
     comp = rows(con, """
         SELECT week_num, actual_hours, actual_tss, actual_swim_m,
-               actual_bike_km, actual_run_km
+               ROUND(actual_bike_km / 1.609344, 1), ROUND(actual_run_km / 1.609344, 1)
         FROM v_weekly_compliance ORDER BY week_num""",
-        ["week", "hours", "tss", "swim_m", "bike_km", "run_km"])
+        ["week", "hours", "tss", "swim_m", "bike_mi", "run_mi"])
     pmc = [[str(r[0])] + [float(x) for x in r[1:]] for r in con.execute(
         """SELECT date::text, ctl, atl, tsb FROM daily_load
            WHERE date >= CURRENT_DATE - 182 ORDER BY date""").fetchall()]
@@ -66,14 +67,14 @@ def fetch(con):
         "SELECT readiness FROM v_readiness ORDER BY date DESC LIMIT 1").fetchone()
     acts = [[str(r[0]), r[1], _num(r[2]), _num(r[3]), _num(r[4])]
             for r in con.execute("""
-        SELECT start_time::date, sport, ROUND(distance_m/1000.0, 2),
+        SELECT start_time::date, sport, ROUND(distance_m/1609.344, 2),
                ROUND(duration_s/3600.0, 2), avg_hr
         FROM activities WHERE duration_s > 0 ORDER BY start_time""").fetchall()]
     efforts = rows(con, """
-        SELECT band, meters, year, date::text, est_time, pace_min_km,
-               run_km, is_all_time_pr
+        SELECT band, meters, year, date::text, est_time, pace_min_mi,
+               run_mi, is_all_time_pr
         FROM v_best_efforts ORDER BY meters, year""",
-        ["band", "meters", "year", "date", "time", "pace", "km", "pr"])
+        ["band", "meters", "year", "date", "time", "pace", "mi", "pr"])
     records = rows(con, "SELECT record, value, date FROM v_records",
                    ["record", "value", "date"])
     return plan, comp, pmc, vitals, eff, (ready[0] if ready else None), acts, efforts, records
@@ -104,8 +105,8 @@ def demo_data(plan):
         f = rng.uniform(0.82, 1.05) if i < 5 else 0.45
         comp.append({"week": p["week"], "hours": round(p["hours"] * f, 1),
                      "tss": round(p["tss"] * f), "swim_m": round(p["swim_m"] * f),
-                     "bike_km": round(p["bike_km"] * f, 1),
-                     "run_km": round(p["run_km"] * f, 1)})
+                     "bike_mi": round(p["bike_mi"] * f, 1),
+                     "run_mi": round(p["run_mi"] * f, 1)})
     eff = []
     d, ef_b, ef_r = start, 1.55, 1.05
     while d <= date.today():
@@ -119,18 +120,18 @@ def demo_data(plan):
     for y in range(2019, 2027):
         for _ in range(rng.randint(60, 120)):
             sp = rng.choices(["run", "bike", "swim"], [.6, .3, .1])[0]
-            km = {"run": abs(rng.gauss(8, 4)), "bike": abs(rng.gauss(30, 15)),
-                  "swim": abs(rng.gauss(1.5, .6))}[sp]
-            hrs = km / {"run": 10, "bike": 25, "swim": 3}[sp]
+            mi = {"run": abs(rng.gauss(5, 2.5)), "bike": abs(rng.gauss(18, 9)),
+                  "swim": abs(rng.gauss(0.9, .35))}[sp]
+            hrs = mi / {"run": 6, "bike": 15.5, "swim": 2}[sp]
             acts.append([f"{y}-{rng.randint(1,12):02d}-{rng.randint(1,28):02d}",
-                         sp, round(km, 2), round(hrs, 2), round(rng.gauss(140, 12))])
+                         sp, round(mi, 2), round(hrs, 2), round(rng.gauss(140, 12))])
     efforts = [{"band": b, "meters": m, "year": 2026, "date": "2026-05-01",
-                "time": t, "pace": p, "km": round(m/1000, 1), "pr": True}
-               for b, m, t, p in [("5k", 5000, "00:23:10", "04:38"),
-                                  ("10k", 10000, "00:48:30", "04:51"),
-                                  ("Half marathon", 21097, "01:51:20", "05:17")]]
-    records = [{"record": "Longest run (km)", "value": "34.1", "date": "2025-10-12"},
-               {"record": "Longest ride (km)", "value": "118.5", "date": "2024-08-03"},
+                "time": t, "pace": p, "mi": round(m/1609.344, 1), "pr": True}
+               for b, m, t, p in [("5k", 5000, "00:23:10", "07:28"),
+                                  ("10k", 10000, "00:48:30", "07:48"),
+                                  ("Half marathon", 21097, "01:51:20", "08:30")]]
+    records = [{"record": "Longest run (mi)", "value": "21.2", "date": "2025-10-12"},
+               {"record": "Longest ride (mi)", "value": "73.6", "date": "2024-08-03"},
                {"record": "Biggest week (hours)", "value": "12.4", "date": "2025-09-29"}]
     return comp, pmc, vitals, eff, "green", acts, efforts, records
 
@@ -339,7 +340,7 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
   </div>
   <div class="card">
     <h2>Sport volume by week — plan vs actual</h2>
-    <div class="note">Swim (m), Bike (km), Run (km).</div>
+    <div class="note">Swim (m), Bike (mi), Run (mi).</div>
     <div class="row3" id="sports"></div>
   </div>
   <div class="row">
@@ -373,7 +374,7 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
     <div class="controls">
       <div class="ctrl"><label>Metric</label>
         <select id="st-metric">
-          <option value="km">Distance (km)</option>
+          <option value="mi">Distance (mi)</option>
           <option value="hours">Duration (hours)</option>
           <option value="hr">Avg heart rate (bpm)</option>
         </select></div>
@@ -434,7 +435,7 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
       <tr><td><b>ATL</b></td><td class="key">Acute Training Load — 7-day exponential average. Your <b>fatigue</b>.</td><td class="key">Spikes after big weeks; fades in days.</td></tr>
       <tr><td><b>TSB</b></td><td class="key">Training Stress Balance = CTL − ATL. Your <b>form</b>.</td><td class="key">Build: −10..−25 · Overreached: &lt; −30 · Race-ready: +5..+15.</td></tr>
       <tr><td><b>EF</b></td><td class="key">Efficiency Factor — bike: power÷HR, run: speed÷HR on steady sessions.</td><td class="key">Rising EF at the same HR = aerobic engine growing.</td></tr>
-      <tr><td><b>ACWR</b></td><td class="key">Acute:Chronic Workload Ratio — this week's run km ÷ 4-week average.</td><td class="key">Safe 0.8–1.3. Above 1.5 = injury-risk ramp.</td></tr>
+      <tr><td><b>ACWR</b></td><td class="key">Acute:Chronic Workload Ratio — this week's run miles ÷ 4-week average.</td><td class="key">Safe 0.8–1.3. Above 1.5 = injury-risk ramp.</td></tr>
       <tr><td><b>Readiness</b></td><td class="key">Daily green/yellow/red from resting HR, HRV, sleep and TSB vs your baselines.</td><td class="key">Red = recovery day. No exceptions.</td></tr>
     </table></div>
 
@@ -713,8 +714,8 @@ pairedBars(document.getElementById('hours'),
   P.map(p => ({label: p.week, plan: p.hours, actual: byWeek[p.week] ? byWeek[p.week].hours : null})),
   {fmt: v => (+v).toFixed(0), unit: 'h'});
 
-[['Swim', 'swim_m', ' m', '--s1'], ['Bike', 'bike_km', ' km', '--s2'],
- ['Run', 'run_km', ' km', '--s3']].forEach(([name, key, unit, color]) => {
+[['Swim', 'swim_m', ' m', '--s1'], ['Bike', 'bike_mi', ' mi', '--s2'],
+ ['Run', 'run_mi', ' mi', '--s3']].forEach(([name, key, unit, color]) => {
   const wrap = document.createElement('div');
   const h = document.createElement('div');
   h.style.cssText = 'font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:4px';
@@ -756,7 +757,7 @@ document.getElementById('plantable').innerHTML =
     <td>${p.week}</td>
     <td><span class="phase">${p.phase}</span>${p.recovery ? ' 💤' : ''}</td>
     <td>${p.hours}</td><td>${p.tss}</td>
-    <td>${(p.swim_m/1000).toFixed(1)}k</td><td>${p.bike_km} km</td><td>${p.run_km} km</td>
+    <td>${(p.swim_m/1000).toFixed(1)}k</td><td>${p.bike_mi} mi</td><td>${p.run_mi} mi</td>
     <td>${Math.floor(p.long_ride/60)}:${String(p.long_ride%60).padStart(2,'0')}</td>
     <td>${p.long_run}min</td>
     <td class="key">${p.key}</td></tr>`).join('');
@@ -766,9 +767,9 @@ const ACTS = D.acts;   // [date, sport, km, hours, hr]
 const YEARS = [...new Set(ACTS.map(a => +a[0].slice(0, 4)))].sort();
 const SPORTS = [...new Set(ACTS.map(a => a[1]))]
   .sort((a, b) => Object.keys(SPORT_COLOR).indexOf(a) - Object.keys(SPORT_COLOR).indexOf(b));
-const st = {metric: 'km', group: 'sport', sport: 'run',
+const st = {metric: 'mi', group: 'sport', sport: 'run',
             y0: YEARS[0], y1: YEARS[YEARS.length - 1], on: new Set(SPORTS)};
-const M = {km: {i: 2, fmt: v => v.toFixed(1), unit: ' km', min: 0.2},
+const M = {mi: {i: 2, fmt: v => v.toFixed(1), unit: ' mi', min: 0.12},
            hours: {i: 3, fmt: v => v.toFixed(1), unit: ' h', min: 0.05},
            hr: {i: 4, fmt: v => v.toFixed(0), unit: ' bpm', min: 60}};
 const y0s = document.getElementById('st-y0'), y1s = document.getElementById('st-y1');
@@ -836,8 +837,8 @@ const pr = D.profile;
 const first = ACTS.length ? ACTS[0][0].slice(0, 4) : '—';
 const tot = {n: ACTS.length,
   hours: ACTS.reduce((s, a) => s + (a[3] || 0), 0),
-  runkm: ACTS.filter(a => a[1] === 'run').reduce((s, a) => s + (a[2] || 0), 0),
-  bikekm: ACTS.filter(a => a[1] === 'bike').reduce((s, a) => s + (a[2] || 0), 0),
+  runmi: ACTS.filter(a => a[1] === 'run').reduce((s, a) => s + (a[2] || 0), 0),
+  bikemi: ACTS.filter(a => a[1] === 'bike').reduce((s, a) => s + (a[2] || 0), 0),
   longrun: Math.max(0, ...ACTS.filter(a => a[1] === 'run').map(a => a[2] || 0)),
   longride: Math.max(0, ...ACTS.filter(a => a[1] === 'bike').map(a => a[2] || 0))};
 document.getElementById('hero').innerHTML = `
@@ -849,10 +850,10 @@ document.getElementById('hero').innerHTML = `
     <div class="statchips">
       <div class="statchip"><b>${tot.n.toLocaleString()}</b>activities</div>
       <div class="statchip"><b>${Math.round(tot.hours).toLocaleString()}</b>hours</div>
-      <div class="statchip"><b>${Math.round(tot.runkm).toLocaleString()} km</b>run</div>
-      <div class="statchip"><b>${Math.round(tot.bikekm).toLocaleString()} km</b>bike</div>
-      <div class="statchip"><b>${tot.longrun.toFixed(1)} km</b>longest run</div>
-      <div class="statchip"><b>${tot.longride.toFixed(1)} km</b>longest ride</div>
+      <div class="statchip"><b>${Math.round(tot.runmi).toLocaleString()} mi</b>run</div>
+      <div class="statchip"><b>${Math.round(tot.bikemi).toLocaleString()} mi</b>bike</div>
+      <div class="statchip"><b>${tot.longrun.toFixed(1)} mi</b>longest run</div>
+      <div class="statchip"><b>${tot.longride.toFixed(1)} mi</b>longest ride</div>
     </div>
   </div>`;
 
@@ -860,8 +861,8 @@ const prs = D.efforts.filter(e => e.pr);
 document.getElementById('pr-table').innerHTML =
   `<tr><th>Distance</th><th>Activity</th><th>Time</th><th>Pace</th><th>Date</th><th>Full run</th></tr>` +
   prs.map(e => `<tr><td><b>${e.band}</b> <span class="pr-star">★</span></td>
-    <td class="key">run</td><td>${e.time}</td><td>${e.pace} /km</td>
-    <td>${e.date}</td><td>${e.km} km</td></tr>`).join('') ||
+    <td class="key">run</td><td>${e.time}</td><td>${e.pace} /mi</td>
+    <td>${e.date}</td><td>${e.mi} mi</td></tr>`).join('') ||
   '<tr><td class="key">No efforts yet.</td></tr>';
 
 const bands = [...new Set(D.efforts.map(e => e.band))];
@@ -872,7 +873,7 @@ document.getElementById('efforts-table').innerHTML =
     .map((e, i) => `<tr>
       <td>${i === 0 ? `<b>${b}</b>` : ''}</td>
       <td>${e.year}${e.pr ? ' <span class="pr-star">★</span>' : ''}</td>
-      <td>${e.time}</td><td>${e.pace} /km</td><td class="key">${e.date}</td></tr>`)
+      <td>${e.time}</td><td>${e.pace} /mi</td><td class="key">${e.date}</td></tr>`)
     .join('')).join('');
 
 document.getElementById('records-table').innerHTML =

@@ -9,8 +9,8 @@ SELECT
     sport,
     COUNT(*)                              AS sessions,
     ROUND(SUM(duration_s) / 3600.0, 1)    AS hours,
-    ROUND(SUM(distance_m) / 1000.0, 1)    AS km,
-    ROUND(SUM(elevation_gain_m), 0)       AS elev_m,
+    ROUND(SUM(distance_m) / 1609.344, 1)  AS mi,
+    ROUND(SUM(elevation_gain_m) * 3.28084, 0) AS elev_ft,
     ROUND(AVG(avg_hr), 0)                 AS avg_hr,
     ROUND(SUM(COALESCE(tss, 0)), 0)       AS tss
 FROM activities
@@ -23,10 +23,10 @@ SELECT
     sport,
     COUNT(*)                              AS sessions,
     ROUND(SUM(duration_s) / 3600.0, 0)    AS hours,
-    ROUND(SUM(distance_m) / 1000.0, 0)    AS km,
-    ROUND(SUM(elevation_gain_m) / 1000.0, 1) AS elev_km,
-    ROUND(MAX(distance_m) / 1000.0, 1)    AS longest_km,
-    ROUND(AVG(distance_m) / 1000.0, 1)    AS avg_km
+    ROUND(SUM(distance_m) / 1609.344, 0)  AS mi,
+    ROUND(SUM(elevation_gain_m) * 3.28084 / 1000, 1) AS elev_kft,
+    ROUND(MAX(distance_m) / 1609.344, 1)  AS longest_mi,
+    ROUND(AVG(distance_m) / 1609.344, 1)  AS avg_mi
 FROM activities
 GROUP BY 1, 2;
 
@@ -42,14 +42,14 @@ SELECT
 FROM activities
 GROUP BY 1, 2, 3, 4;
 
--- Run distance distribution (1 km buckets to 25, then wide)
+-- Run distance distribution (1 mile buckets to 16, then wide)
 CREATE OR REPLACE VIEW v_run_distance_dist AS
 SELECT
-    CASE WHEN distance_m < 25000 THEN floor(distance_m / 1000)::int
-         ELSE 25 END                      AS km_bucket,
+    CASE WHEN distance_m < 25750 THEN floor(distance_m / 1609.344)::int
+         ELSE 16 END                      AS mi_bucket,
     COUNT(*)                              AS runs
 FROM activities
-WHERE sport = 'run' AND distance_m > 500
+WHERE sport = 'run' AND distance_m > 400
 GROUP BY 1;
 
 -- Best efforts (proxy): fastest avg pace among runs >= band distance.
@@ -80,11 +80,13 @@ ranked AS (
       AND a.moving_s / (a.distance_m / 1000.0) BETWEEN 195 AND 720
 )
 SELECT band, meters, year, date, title,
-       ROUND(distance_m / 1000.0, 2)  AS run_km,
+       ROUND(distance_m / 1609.344, 2) AS run_mi,
        ROUND(est_time_s)              AS est_time_s,
        to_char((ROUND(est_time_s) || ' seconds')::interval, 'HH24:MI:SS') AS est_time,
        ROUND(pace_s_km)               AS pace_s_km,
        to_char((ROUND(pace_s_km) || ' seconds')::interval, 'MI:SS')       AS pace_min_km,
+       ROUND(pace_s_km * 1.609344)    AS pace_s_mi,
+       to_char((ROUND(pace_s_km * 1.609344) || ' seconds')::interval, 'MI:SS') AS pace_min_mi,
        (rk_all = 1)                   AS is_all_time_pr,
        rk_year
 FROM ranked
@@ -93,17 +95,17 @@ ORDER BY meters, year;
 
 -- Personal records, one row per metric
 CREATE OR REPLACE VIEW v_records AS
-SELECT 'Longest run (km)' AS record, ROUND(MAX(distance_m)/1000.0,1)::text AS value,
+SELECT 'Longest run (mi)' AS record, ROUND(MAX(distance_m)/1609.344,1)::text AS value,
        (SELECT start_time::date::text FROM activities WHERE sport='run'
         ORDER BY distance_m DESC NULLS LAST LIMIT 1) AS date
 FROM activities WHERE sport='run'
 UNION ALL
-SELECT 'Longest ride (km)', ROUND(MAX(distance_m)/1000.0,1)::text,
+SELECT 'Longest ride (mi)', ROUND(MAX(distance_m)/1609.344,1)::text,
        (SELECT start_time::date::text FROM activities WHERE sport='bike'
         ORDER BY distance_m DESC NULLS LAST LIMIT 1)
 FROM activities WHERE sport='bike'
 UNION ALL
-SELECT 'Most climbing in a ride (m)', ROUND(MAX(elevation_gain_m),0)::text,
+SELECT 'Most climbing in a ride (ft)', ROUND(MAX(elevation_gain_m)*3.28084,0)::text,
        (SELECT start_time::date::text FROM activities WHERE sport='bike'
         ORDER BY elevation_gain_m DESC NULLS LAST LIMIT 1)
 FROM activities WHERE sport='bike'
@@ -122,7 +124,7 @@ FROM (
 -- Rolling 7d / 28d run load (acute:chronic ratio — injury guard)
 CREATE OR REPLACE VIEW v_run_load_ratio AS
 WITH daily AS (
-    SELECT start_time::date AS d, SUM(distance_m) / 1000.0 AS km
+    SELECT start_time::date AS d, SUM(distance_m) / 1609.344 AS mi
     FROM activities WHERE sport = 'run' GROUP BY 1
 ),
 cal AS (
@@ -131,10 +133,10 @@ cal AS (
 )
 SELECT
     cal.d AS date,
-    ROUND(SUM(COALESCE(daily.km,0)) OVER w7, 1)       AS km_7d,
-    ROUND(SUM(COALESCE(daily.km,0)) OVER w28 / 4, 1)  AS km_28d_weekly_avg,
-    ROUND(SUM(COALESCE(daily.km,0)) OVER w7
-        / NULLIF(SUM(COALESCE(daily.km,0)) OVER w28 / 4, 0), 2) AS acwr
+    ROUND(SUM(COALESCE(daily.mi,0)) OVER w7, 1)       AS mi_7d,
+    ROUND(SUM(COALESCE(daily.mi,0)) OVER w28 / 4, 1)  AS mi_28d_weekly_avg,
+    ROUND(SUM(COALESCE(daily.mi,0)) OVER w7
+        / NULLIF(SUM(COALESCE(daily.mi,0)) OVER w28 / 4, 0), 2) AS acwr
 FROM cal LEFT JOIN daily USING (d)
 WINDOW w7  AS (ORDER BY cal.d ROWS BETWEEN 6 PRECEDING AND CURRENT ROW),
        w28 AS (ORDER BY cal.d ROWS BETWEEN 27 PRECEDING AND CURRENT ROW);
@@ -146,7 +148,7 @@ SELECT id, source, sport, start_time, start_time::date AS date,
        to_char(start_time, 'Dy') AS dow_name,
        EXTRACT(ISODOW FROM start_time)::int AS dow,
        duration_s, moving_s, ROUND(duration_s/3600.0, 2) AS hours,
-       distance_m, ROUND(distance_m/1000.0, 2) AS km,
+       distance_m, ROUND(distance_m/1609.344, 2) AS mi,
        elevation_gain_m, avg_hr, max_hr, avg_power_w, norm_power_w,
        avg_cadence, avg_pace_s_km, avg_pace_s_100m,
        intensity_factor, tss, calories, is_race, is_brick, title
