@@ -180,6 +180,15 @@ psql "$IRONMAN_DB_URL" -f analytics_views.sql    # analytics marts
 .venv/bin/python dashboard/build_dashboard.py    # -> dashboard/dashboard.html
 ```
 
+Optional app server — serves the dashboard and unlocks the **Plan editor**
+(inline edits + CSV upload, with data-quality checks that block bad writes
+and warn on coaching risks like >30% weekly ramps):
+
+```bash
+.venv/bin/pip install fastapi uvicorn python-multipart
+.venv/bin/uvicorn server:app --port 8703    # -> http://localhost:8703/#plan
+```
+
 Enter your thresholds after week-1 tests (drives accurate TSS):
 
 ```sql

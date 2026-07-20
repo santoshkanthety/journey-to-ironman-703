@@ -324,6 +324,30 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
     border-radius: 5px; padding: 1px 6px; font-size: 12.5px; }
   footer { text-align: center; color: var(--muted); font-size: 11.5px;
     padding: 18px 0 26px; }
+  .btn { display: inline-flex; align-items: center; font: inherit; font-size: 13px;
+    font-weight: 650; color: #fff; background: var(--brand); border: none;
+    border-radius: 9px; padding: 8px 16px; cursor: pointer; text-decoration: none; }
+  .btn:hover { filter: brightness(1.1); }
+  .btn.ghost { background: transparent; color: var(--brand);
+    border: 1px solid var(--brand); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  #plan-edit input, #plan-edit select { background: var(--page); color: var(--ink);
+    font: inherit; font-size: 12.5px; border: 1px solid var(--grid);
+    border-radius: 6px; padding: 4px 6px; width: 100%; box-sizing: border-box; }
+  #plan-edit input:focus { border-color: var(--brand); outline: none; }
+  #plan-edit input.num { width: 64px; text-align: right;
+    font-variant-numeric: tabular-nums; }
+  #plan-edit td { padding: 4px 4px; }
+  .report { border-radius: 10px; padding: 10px 14px; margin-top: 12px;
+    font-size: 12.5px; }
+  .report.err { border: 1px solid var(--crit);
+    background: color-mix(in srgb, var(--crit) 8%, transparent); }
+  .report.warn { border: 1px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 8%, transparent); }
+  .report.ok { border: 1px solid var(--good);
+    background: color-mix(in srgb, var(--good) 8%, transparent); }
+  .report ul { margin: 4px 0 0 18px; padding: 0; }
+  .report li { margin: 2px 0; }
 </style>
 <nav>
   <div class="logo">
@@ -337,6 +361,7 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
     <a href="#dash" data-p="dash" class="on">Dashboard</a>
     <a href="#stats" data-p="stats">Statistics</a>
     <a href="#profile" data-p="profile">Profile</a>
+    <a href="#plan" data-p="plan">Plan</a>
     <a href="#guide" data-p="guide">Guide</a>
   </div>
   <div class="navright" id="sub"></div>
@@ -479,6 +504,32 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
       <div class="note">All-time bests across the training history.</div>
       <div class="tablewrap"><table id="records-table"></table></div>
     </div>
+  </div>
+</div>
+
+<!-- ============================ PLAN EDITOR ============================ -->
+<div class="page" id="page-plan">
+  <h1>Plan editor</h1>
+  <div class="sub">Edit inline or upload a CSV — every save runs data-quality checks against the backend before anything lands.</div>
+  <div id="plan-offline" class="demo-banner" style="display:none">
+    Backend not running — read-only view. Start it with:
+    <code>.venv/bin/uvicorn server:app --port 8703</code> then open
+    <code>http://localhost:8703/#plan</code>
+  </div>
+  <div class="card" id="plan-tools" style="display:none">
+    <div class="controls" style="margin-bottom:0;align-items:center">
+      <button class="btn" id="plan-save">Save changes</button>
+      <a class="btn ghost" href="/api/plan.csv" download>Download CSV</a>
+      <label class="btn ghost" style="cursor:pointer">Upload CSV
+        <input type="file" id="plan-file" accept=".csv" style="display:none"></label>
+      <span class="note" style="margin:0">Distances in miles · swim in meters · CSV round-trips through Download → edit → Upload</span>
+    </div>
+    <div id="plan-report"></div>
+  </div>
+  <div class="card">
+    <h2>16-week plan</h2>
+    <div class="note">Hard errors block the save; warnings save but flag coaching risks (ramp &gt;30%, long run &gt;150min, empty swim weeks…).</div>
+    <div class="tablewrap"><table id="plan-edit"></table></div>
   </div>
 </div>
 
@@ -1078,6 +1129,100 @@ document.getElementById('records-table').innerHTML =
   `<tr><th>Record</th><th>Value</th><th>When</th></tr>` +
   D.records.map(r => `<tr><td class="key">${r.record}</td>
     <td><b>${r.value}</b></td><td>${r.date || '—'}</td></tr>`).join('');
+
+// ---- plan editor (backend-hooked) ----
+const PCOLS = [
+  ['week_num','Wk',null], ['phase','Phase','phase'],
+  ['planned_hours','Hours','num'], ['planned_tss','TSS','num'],
+  ['swim_m','Swim m','num'], ['bike_mi','Bike mi','num'], ['run_mi','Run mi','num'],
+  ['swim_sessions','S#','num'], ['bike_sessions','B#','num'], ['run_sessions','R#','num'],
+  ['strength_sessions','St#','num'], ['long_ride_min','Long ride','num'],
+  ['long_run_min','Long run','num'], ['is_recovery','Rec','chk'],
+  ['focus','Focus','txt'], ['key_workouts','Key workouts','txt']];
+
+function planReport(r) {
+  const box = document.getElementById('plan-report');
+  if (!r) { box.innerHTML = ''; return; }
+  let cls = r.applied ? (r.warnings.length ? 'warn' : 'ok') : 'err';
+  let h = r.applied
+    ? `<b>Saved — ${r.weeks_updated} weeks updated.</b>`
+    : `<b>Blocked — fix ${r.errors.length} error(s), nothing was written.</b>`;
+  if (r.errors.length) h += `<ul>${r.errors.map(e => `<li>${e}</li>`).join('')}</ul>`;
+  if (r.warnings.length) h += `<div style="margin-top:4px"><b>Warnings</b> (saved anyway):</div>
+    <ul>${r.warnings.map(w => `<li>${w}</li>`).join('')}</ul>`;
+  box.innerHTML = `<div class="report ${cls}">${h}</div>`;
+}
+
+function renderPlanGrid(rows) {
+  const t = document.getElementById('plan-edit');
+  t.innerHTML = `<tr>${PCOLS.map(c => `<th>${c[1]}</th>`).join('')}</tr>` +
+    rows.map(r => `<tr>${PCOLS.map(([f, _, ty]) => {
+      const v = r[f] == null ? '' : r[f];
+      if (!ty) return `<td>${v}</td>`;
+      if (ty === 'phase') return `<td><select data-wk="${r.week_num}" data-f="${f}">
+        ${['base','build','peak','taper','race'].map(p =>
+          `<option${p === v ? ' selected' : ''}>${p}</option>`).join('')}</select></td>`;
+      if (ty === 'chk') return `<td style="text-align:center">
+        <input type="checkbox" data-wk="${r.week_num}" data-f="${f}" ${+v ? 'checked' : ''}></td>`;
+      if (ty === 'txt') return `<td style="min-width:170px">
+        <input type="text" data-wk="${r.week_num}" data-f="${f}" value="${String(v).replace(/"/g, '&quot;')}"></td>`;
+      return `<td><input class="num" data-wk="${r.week_num}" data-f="${f}" value="${v}"></td>`;
+    }).join('')}</tr>`).join('');
+}
+
+function collectPlan() {
+  const rows = {};
+  document.querySelectorAll('#plan-edit [data-wk]').forEach(inp => {
+    const wk = inp.dataset.wk;
+    rows[wk] = rows[wk] || {week_num: wk};
+    rows[wk][inp.dataset.f] = inp.type === 'checkbox' ? (inp.checked ? 1 : 0) : inp.value;
+  });
+  return Object.values(rows);
+}
+
+async function initPlan() {
+  let rows = null;
+  try {
+    const resp = await fetch('/api/plan');
+    if (resp.ok) rows = await resp.json();
+  } catch (e) {}
+  const offline = !rows;
+  document.getElementById('plan-offline').style.display = offline ? '' : 'none';
+  document.getElementById('plan-tools').style.display = offline ? 'none' : '';
+  if (offline) {
+    document.getElementById('plan-edit').innerHTML =
+      `<tr><th>Wk</th><th>Phase</th><th>Hours</th><th>TSS</th><th>Focus</th></tr>` +
+      P.map(p => `<tr><td>${p.week}</td><td class="key">${p.phase}</td>
+        <td>${p.hours}</td><td>${p.tss}</td><td class="key">${p.focus || ''}</td></tr>`).join('');
+    return;
+  }
+  renderPlanGrid(rows);
+  const save = document.getElementById('plan-save');
+  save.onclick = async () => {
+    save.disabled = true; save.textContent = 'Checking…';
+    try {
+      const resp = await fetch('/api/plan', {method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(collectPlan())});
+      planReport(await resp.json());
+      if (resp.ok) renderPlanGrid(await (await fetch('/api/plan')).json());
+    } catch (e) { planReport({applied: false, errors: ['Backend unreachable: ' + e], warnings: []}); }
+    save.disabled = false; save.textContent = 'Save changes';
+  };
+  document.getElementById('plan-file').onchange = async ev => {
+    const f = ev.target.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append('file', f);
+    try {
+      const resp = await fetch('/api/plan/upload', {method: 'POST', body: fd});
+      planReport(await resp.json());
+      if (resp.ok) renderPlanGrid(await (await fetch('/api/plan')).json());
+    } catch (e) { planReport({applied: false, errors: ['Backend unreachable: ' + e], warnings: []}); }
+    ev.target.value = '';
+  };
+}
+initPlan();
 
 route();
 </script>
