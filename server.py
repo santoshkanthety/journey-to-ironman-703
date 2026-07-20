@@ -30,6 +30,7 @@ from db import connect
 app = FastAPI(title="TriPeak")
 DASH = Path(__file__).parent / "dashboard" / "dashboard.html"
 MI = 1.609344
+ATHLETE_ID = int(__import__("os").environ.get("ATHLETE_ID", "1"))
 
 PHASES = {"base", "build", "peak", "taper", "race"}
 COLS = ["week_num", "phase", "planned_hours", "planned_tss", "swim_m",
@@ -44,8 +45,9 @@ NUMERIC = {  # field: (min, max) — hard bounds, inclusive
 }
 
 
-def validate(rows):
-    """Data-quality checks. Returns (errors, warnings, clean_rows)."""
+def validate(rows, ramp_limit_pct=30, long_run_cap_min=150):
+    """Data-quality checks. Returns (errors, warnings, clean_rows).
+    Thresholds come from athlete_settings — configurable per athlete."""
     errors, warnings, clean = [], [], []
     seen = set()
     for i, r in enumerate(rows):
@@ -99,14 +101,15 @@ def validate(rows):
         for wk in range(1, 17):
             c = by_wk[wk]
             if prev and not c["is_recovery"] and not prev["is_recovery"]:
-                if c["planned_hours"] > prev["planned_hours"] * 1.3:
+                if c["planned_hours"] > prev["planned_hours"] * (1 + ramp_limit_pct / 100):
                     warnings.append(
                         f"week {wk}: hours ramp +{c['planned_hours'] / prev['planned_hours'] - 1:.0%} "
-                        f"vs week {wk - 1} — over the 30% safe ramp")
+                        f"vs week {wk - 1} — over the {ramp_limit_pct}% safe ramp")
             if c["is_recovery"] and prev and c["planned_hours"] >= prev["planned_hours"]:
                 warnings.append(f"week {wk}: marked recovery but hours >= week {wk - 1}")
-            if c["long_run_min"] > 150:
-                warnings.append(f"week {wk}: long run {c['long_run_min']:g}min > 150 — injury risk")
+            if c["long_run_min"] > long_run_cap_min:
+                warnings.append(f"week {wk}: long run {c['long_run_min']:g}min > "
+                                f"{long_run_cap_min} — injury risk")
             if wk < 16 and c["swim_m"] == 0:
                 warnings.append(f"week {wk}: no swim volume — swim is the limiter")
             if wk == 16 and c["planned_hours"] > 8:
@@ -123,12 +126,13 @@ def apply_plan(clean):
                swim_m=%s, bike_km=%s, run_km=%s, swim_sessions=%s, bike_sessions=%s,
                run_sessions=%s, strength_sessions=%s, long_ride_min=%s,
                long_run_min=%s, is_recovery=%s, focus=%s, key_workouts=%s
-               WHERE week_num=%s""",
+               WHERE athlete_id=%s AND week_num=%s""",
             (c["phase"], c["planned_hours"], c["planned_tss"], c["swim_m"],
              round(c["bike_mi"] * MI, 1), round(c["run_mi"] * MI, 1),
              c["swim_sessions"], c["bike_sessions"], c["run_sessions"],
              c["strength_sessions"], c["long_ride_min"], c["long_run_min"],
-             c["is_recovery"], c["focus"], c["key_workouts"], c["week_num"]))
+             c["is_recovery"], c["focus"], c["key_workouts"],
+             ATHLETE_ID, c["week_num"]))
     con.commit()
     con.close()
 
@@ -145,12 +149,195 @@ def fetch_plan():
                ROUND(bike_km / 1.609344, 1), ROUND(run_km / 1.609344, 1),
                swim_sessions, bike_sessions, run_sessions, strength_sessions,
                long_ride_min, long_run_min, is_recovery::int, focus, key_workouts
-        FROM weekly_plan ORDER BY week_num""")
+        FROM weekly_plan WHERE athlete_id = %s ORDER BY week_num""", (ATHLETE_ID,))
     from decimal import Decimal
     rows = [dict(zip(COLS, [float(v) if isinstance(v, Decimal) else v for v in r]))
             for r in cur.fetchall()]
     con.close()
     return rows
+
+
+SETTING_BOUNDS = {  # configurable per-athlete KPI targets: (min, max)
+    "ctl_target": (30, 120), "compliance_goal_pct": (50, 100),
+    "ramp_limit_pct": (10, 60), "long_run_cap_min": (60, 240),
+    "tsb_race_lo": (-10, 25), "tsb_race_hi": (0, 30),
+}
+
+
+def fetch_settings():
+    con = connect()
+    row = con.execute("""
+        SELECT a.name, a.tagline, s.race_date::text, s.plan_weeks, s.ctl_target,
+               s.compliance_goal_pct, s.ramp_limit_pct, s.long_run_cap_min,
+               s.tsb_race_lo, s.tsb_race_hi, s.units
+        FROM athletes a JOIN athlete_settings s ON s.athlete_id = a.id
+        WHERE a.id = %s""", (ATHLETE_ID,)).fetchone()
+    con.close()
+    keys = ["name", "tagline", "race_date", "plan_weeks", "ctl_target",
+            "compliance_goal_pct", "ramp_limit_pct", "long_run_cap_min",
+            "tsb_race_lo", "tsb_race_hi", "units"]
+    return dict(zip(keys, row))
+
+
+@app.get("/api/settings")
+def get_settings():
+    return fetch_settings()
+
+
+@app.put("/api/settings")
+def put_settings(body: dict):
+    """Kickoff: validate targets + race date, write settings, anchor the plan.
+
+    Setting race_date stamps weekly_plan.start_date so week 16 contains the
+    race (weeks start Monday). Clearing it un-anchors the plan.
+    """
+    from datetime import date, timedelta
+    errors, warnings = [], []
+    clean = {}
+    for f, (lo, hi) in SETTING_BOUNDS.items():
+        if f not in body:
+            continue
+        try:
+            v = int(float(body[f]))
+        except (TypeError, ValueError):
+            errors.append(f"{f} '{body[f]}' is not a number")
+            continue
+        if not lo <= v <= hi:
+            errors.append(f"{f}={v} outside sane range [{lo}, {hi}]")
+        clean[f] = v
+    if clean.get("tsb_race_lo") is not None and clean.get("tsb_race_hi") is not None \
+            and clean["tsb_race_lo"] >= clean["tsb_race_hi"]:
+        errors.append("tsb_race_lo must be below tsb_race_hi")
+
+    race = body.get("race_date") or None
+    if race:
+        try:
+            race = date.fromisoformat(str(race))
+        except ValueError:
+            errors.append(f"race_date '{body['race_date']}' is not YYYY-MM-DD")
+            race = None
+        if race:
+            days_out = (race - date.today()).days
+            if days_out < 0:
+                errors.append("race_date is in the past")
+            elif days_out < 7 * 16:
+                warnings.append(
+                    f"race is {days_out // 7} weeks out — a 16-week plan is compressed; "
+                    "early weeks will already be in the past")
+            if race.weekday() != 6:
+                warnings.append("race_date is not a Sunday — most 70.3s race Sunday; "
+                                "week 16 will still contain it")
+            if days_out > 365:
+                warnings.append("race is over a year out — plan anchors anyway")
+    if errors:
+        return JSONResponse(status_code=422, content={
+            "applied": False, "errors": errors, "warnings": warnings})
+
+    con = connect()
+    if clean:
+        sets = ", ".join(f"{f} = %s" for f in clean)
+        con.execute(f"UPDATE athlete_settings SET {sets} WHERE athlete_id = %s",
+                    [*clean.values(), ATHLETE_ID])
+    if "race_date" in body:
+        con.execute("UPDATE athlete_settings SET race_date = %s WHERE athlete_id = %s",
+                    (race, ATHLETE_ID))
+        if race:
+            monday_w16 = race - timedelta(days=race.weekday())
+            con.execute("""
+                UPDATE weekly_plan
+                SET start_date = %s::date - ((16 - week_num) * 7)
+                WHERE athlete_id = %s""", (monday_w16, ATHLETE_ID))
+            warnings.append(f"plan anchored: week 1 starts "
+                            f"{(monday_w16 - timedelta(weeks=15)).isoformat()}, "
+                            f"race week starts {monday_w16.isoformat()}")
+        else:
+            con.execute("UPDATE weekly_plan SET start_date = NULL WHERE athlete_id = %s",
+                        (ATHLETE_ID,))
+            warnings.append("race date cleared — plan un-anchored")
+    con.commit()
+    con.close()
+    rebuild_dashboard()
+    return {"applied": True, "errors": [], "warnings": warnings,
+            "settings": fetch_settings()}
+
+
+# ---------------------------------------------------------------- admin
+@app.get("/api/admin/athletes")
+def admin_athletes():
+    con = connect()
+    rows = con.execute("""
+        SELECT a.id, a.name, a.tagline, s.race_date::text,
+               (SELECT COUNT(*) FROM activities x WHERE x.athlete_id = a.id),
+               (SELECT COUNT(*) FROM daily_vitals v WHERE v.athlete_id = a.id),
+               (SELECT COUNT(*) FROM weekly_plan p WHERE p.athlete_id = a.id)
+        FROM athletes a LEFT JOIN athlete_settings s ON s.athlete_id = a.id
+        ORDER BY a.id""").fetchall()
+    con.close()
+    keys = ["id", "name", "tagline", "race_date", "activities", "vitals_days", "plan_weeks"]
+    return [dict(zip(keys, r)) for r in rows]
+
+
+@app.post("/api/admin/athletes")
+def admin_create_athlete(body: dict):
+    name = str(body.get("name", "")).strip()
+    if not 2 <= len(name) <= 80:
+        return JSONResponse(status_code=422, content={
+            "applied": False, "errors": ["name must be 2–80 characters"], "warnings": []})
+    tagline = str(body.get("tagline") or "Journey to Ironman 70.3")[:120]
+    con = connect()
+    aid = con.execute(
+        "INSERT INTO athletes (name, tagline) VALUES (%s, %s) RETURNING id",
+        (name, tagline)).fetchone()[0]
+    con.execute("INSERT INTO athlete_settings (athlete_id) VALUES (%s)", (aid,))
+    con.commit()
+    con.close()
+    import seed_plan
+    seed_plan.seed(None, athlete_id=aid)     # template 16-week plan, un-anchored
+    return {"applied": True, "errors": [],
+            "warnings": [f"athlete {aid} '{name}' created with template plan; "
+                         "kickoff their race date from their session"],
+            "athlete_id": aid}
+
+
+@app.post("/api/admin/import/apple")
+def admin_import_apple(body: dict):
+    """Import an Apple Health export for any athlete.
+    Path-based (exports are 100s of MB — browser upload impractical):
+    body = {athlete_id, path} where path is export.zip or export.xml on this machine.
+    """
+    import os
+    import subprocess
+    errors = []
+    try:
+        aid = int(body.get("athlete_id"))
+    except (TypeError, ValueError):
+        errors.append("athlete_id must be an integer")
+        aid = None
+    path = os.path.expanduser(str(body.get("path", "")).strip())
+    if not path.endswith((".zip", ".xml")):
+        errors.append("path must point to export.zip or export.xml")
+    elif not os.path.isfile(path):
+        errors.append(f"file not found: {path}")
+    if aid is not None:
+        con = connect()
+        ok = con.execute("SELECT 1 FROM athletes WHERE id = %s", (aid,)).fetchone()
+        con.close()
+        if not ok:
+            errors.append(f"athlete {aid} does not exist")
+    if errors:
+        return JSONResponse(status_code=422, content={
+            "applied": False, "errors": errors, "warnings": []})
+    env = {**os.environ, "ATHLETE_ID": str(aid)}
+    r = subprocess.run(
+        [sys.executable, str(Path(__file__).parent / "etl" / "apple_health_import.py"), path],
+        capture_output=True, text=True, env=env, timeout=1800)
+    if r.returncode != 0:
+        return JSONResponse(status_code=500, content={
+            "applied": False, "errors": [r.stderr[-500:]], "warnings": []})
+    subprocess.run([sys.executable, str(Path(__file__).parent / "etl" / "compute_metrics.py")],
+                   capture_output=True, env=env)
+    rebuild_dashboard()
+    return {"applied": True, "errors": [], "warnings": [r.stdout.strip()]}
 
 
 @app.get("/")
@@ -174,7 +361,8 @@ def get_plan_csv():
 
 
 def _process(rows):
-    errors, warnings, clean = validate(rows)
+    s = fetch_settings()
+    errors, warnings, clean = validate(rows, s["ramp_limit_pct"], s["long_run_cap_min"])
     if errors:
         return JSONResponse(status_code=422, content={
             "applied": False, "errors": errors, "warnings": warnings})

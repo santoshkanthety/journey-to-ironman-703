@@ -1,20 +1,45 @@
--- Ironman 70.3 Training — Postgres schema
+-- Ironman 70.3 Training — Postgres schema (multi-athlete)
 -- Apply: psql "$IRONMAN_DB_URL" -f schema_pg.sql
 
 CREATE SCHEMA IF NOT EXISTS ironman;
 SET search_path TO ironman;
 
 -- ---------------------------------------------------------------
--- Athlete profile: threshold benchmarks driving zones + TSS.
--- One row per test date; latest row = current zones.
+-- Athletes + per-athlete configurable targets (SaaS model: every
+-- indicator reads these instead of hardcoded values).
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS athletes (
+    id         INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name       TEXT NOT NULL,
+    tagline    TEXT DEFAULT 'Journey to Ironman 70.3',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS athlete_settings (
+    athlete_id          INT PRIMARY KEY REFERENCES athletes (id),
+    race_date           DATE,                    -- kickoff anchor; week 16 contains it
+    plan_weeks          INT NOT NULL DEFAULT 16,
+    ctl_target          INT NOT NULL DEFAULT 65,
+    compliance_goal_pct INT NOT NULL DEFAULT 85,
+    ramp_limit_pct      INT NOT NULL DEFAULT 30,
+    long_run_cap_min    INT NOT NULL DEFAULT 150,
+    tsb_race_lo         INT NOT NULL DEFAULT 5,
+    tsb_race_hi         INT NOT NULL DEFAULT 15,
+    units               TEXT NOT NULL DEFAULT 'imperial'
+                        CHECK (units IN ('imperial', 'metric'))
+);
+
+-- ---------------------------------------------------------------
+-- Threshold benchmarks (one row per test date, per athlete).
 -- ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS athlete_profile (
     id                      INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    athlete_id              INT NOT NULL DEFAULT 1 REFERENCES athletes (id),
     test_date               DATE NOT NULL,
     weight_kg               NUMERIC(5,1),
-    ftp_watts               INT,        -- bike Functional Threshold Power
-    run_threshold_pace_s_km INT,        -- sec per km at threshold
-    css_pace_s_100m         INT,        -- swim Critical Swim Speed, sec/100m
+    ftp_watts               INT,
+    run_threshold_pace_s_km INT,
+    css_pace_s_100m         INT,
     lthr_bike               INT,
     lthr_run                INT,
     max_hr                  INT,
@@ -24,11 +49,11 @@ CREATE TABLE IF NOT EXISTS athlete_profile (
 );
 
 -- ---------------------------------------------------------------
--- Activities: one row per workout from Strava / Apple Health.
--- (source, external_id) unique -> idempotent re-sync, dedupe.
+-- Activities: one row per workout (Strava / Apple Health).
 -- ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS activities (
     id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    athlete_id       INT NOT NULL DEFAULT 1 REFERENCES athletes (id),
     source           TEXT NOT NULL CHECK (source IN ('strava','apple','manual')),
     external_id      TEXT,
     sport            TEXT NOT NULL CHECK (sport IN ('swim','bike','run','strength','other')),
@@ -42,28 +67,32 @@ CREATE TABLE IF NOT EXISTS activities (
     avg_power_w      INT,
     norm_power_w     INT,
     avg_cadence      NUMERIC(5,1),
-    avg_pace_s_km    NUMERIC(6,1),      -- run
-    avg_pace_s_100m  NUMERIC(6,1),      -- swim
+    avg_pace_s_km    NUMERIC(6,1),
+    avg_pace_s_100m  NUMERIC(6,1),
     intensity_factor NUMERIC(4,2),
-    tss              NUMERIC(6,1),      -- computed by etl if source lacks it
+    tss              NUMERIC(6,1),
     calories         NUMERIC(7,1),
     is_race          BOOLEAN DEFAULT FALSE,
     is_brick         BOOLEAN DEFAULT FALSE,
     rpe              INT CHECK (rpe BETWEEN 1 AND 10),
     title            TEXT,
-    raw_json         JSONB,
-    UNIQUE (source, external_id)
+    raw_json         JSONB
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_athlete_src
+  ON activities (athlete_id, source, external_id);
 CREATE INDEX IF NOT EXISTS idx_activities_start ON activities (start_time);
 CREATE INDEX IF NOT EXISTS idx_activities_sport ON activities (sport, start_time);
+CREATE INDEX IF NOT EXISTS idx_activities_athlete_start
+  ON activities (athlete_id, start_time);
 
 -- ---------------------------------------------------------------
--- Daily vitals: Apple Health (watch) + manual subjective scores.
+-- Daily vitals (Apple Health + manual), per athlete.
 -- ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS daily_vitals (
-    date               DATE PRIMARY KEY,
+    athlete_id         INT NOT NULL DEFAULT 1 REFERENCES athletes (id),
+    date               DATE NOT NULL,
     resting_hr         INT,
-    hrv_ms             NUMERIC(5,1),    -- Apple SDNN
+    hrv_ms             NUMERIC(5,1),
     sleep_hours        NUMERIC(4,2),
     sleep_deep_hours   NUMERIC(4,2),
     weight_kg          NUMERIC(5,1),
@@ -75,27 +104,30 @@ CREATE TABLE IF NOT EXISTS daily_vitals (
     subjective_fatigue INT CHECK (subjective_fatigue BETWEEN 1 AND 10),
     soreness           INT CHECK (soreness BETWEEN 1 AND 10),
     mood               INT CHECK (mood BETWEEN 1 AND 10),
-    notes              TEXT
+    notes              TEXT,
+    PRIMARY KEY (athlete_id, date)
 );
 
 -- ---------------------------------------------------------------
 -- Daily training load: CTL/ATL/TSB (compute_metrics.py fills).
--- CTL = 42d EMA of daily TSS (fitness), ATL = 7d EMA (fatigue),
--- TSB = prior-day CTL - prior-day ATL (form).
 -- ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS daily_load (
-    date      DATE PRIMARY KEY,
-    tss_total NUMERIC(6,1) NOT NULL DEFAULT 0,
-    ctl       NUMERIC(6,1),
-    atl       NUMERIC(6,1),
-    tsb       NUMERIC(6,1)
+    athlete_id INT NOT NULL DEFAULT 1 REFERENCES athletes (id),
+    date       DATE NOT NULL,
+    tss_total  NUMERIC(6,1) NOT NULL DEFAULT 0,
+    ctl        NUMERIC(6,1),
+    atl        NUMERIC(6,1),
+    tsb        NUMERIC(6,1),
+    PRIMARY KEY (athlete_id, date)
 );
 
 -- ---------------------------------------------------------------
--- 16-week plan. week 16 = race week. start_date = Monday.
+-- 16-week plan per athlete. start_date set by the kickoff feature
+-- (race_date in athlete_settings anchors week 16).
 -- ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS weekly_plan (
-    week_num          INT PRIMARY KEY CHECK (week_num BETWEEN 1 AND 16),
+    athlete_id        INT NOT NULL DEFAULT 1 REFERENCES athletes (id),
+    week_num          INT NOT NULL CHECK (week_num BETWEEN 1 AND 16),
     phase             TEXT NOT NULL CHECK (phase IN ('base','build','peak','taper','race')),
     start_date        DATE,
     planned_hours     NUMERIC(4,1) NOT NULL,
@@ -111,29 +143,33 @@ CREATE TABLE IF NOT EXISTS weekly_plan (
     long_run_min      INT,
     is_recovery       BOOLEAN DEFAULT FALSE,
     focus             TEXT,
-    key_workouts      TEXT
+    key_workouts      TEXT,
+    PRIMARY KEY (athlete_id, week_num)
 );
 
 CREATE TABLE IF NOT EXISTS planned_workouts (
     id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    week_num     INT NOT NULL REFERENCES weekly_plan (week_num),
-    day_of_week  INT NOT NULL CHECK (day_of_week BETWEEN 1 AND 7),  -- 1=Mon
+    athlete_id   INT NOT NULL DEFAULT 1,
+    week_num     INT NOT NULL,
+    day_of_week  INT NOT NULL CHECK (day_of_week BETWEEN 1 AND 7),
     sport        TEXT NOT NULL CHECK (sport IN ('swim','bike','run','strength','brick','rest')),
     title        TEXT NOT NULL,
     description  TEXT,
     duration_min INT,
     intensity    TEXT CHECK (intensity IN ('recovery','endurance','tempo','threshold','vo2','race_pace')),
     tss_est      INT,
-    completed_activity_id BIGINT REFERENCES activities (id)
+    completed_activity_id BIGINT REFERENCES activities (id),
+    FOREIGN KEY (athlete_id, week_num) REFERENCES weekly_plan (athlete_id, week_num)
 );
 CREATE INDEX IF NOT EXISTS idx_planned_week ON planned_workouts (week_num, day_of_week);
 
 -- ---------------------------------------------------------------
--- Views (KPI sources)
+-- Views (KPI sources) — all athlete-aware
 -- ---------------------------------------------------------------
 CREATE OR REPLACE VIEW v_weekly_actuals AS
 SELECT
-    date_trunc('week', start_time)::date                       AS week_start,  -- Monday
+    athlete_id,
+    date_trunc('week', start_time)::date                       AS week_start,
     ROUND(SUM(duration_s) / 3600.0, 2)                         AS hours,
     ROUND(SUM(COALESCE(tss, 0)), 0)                            AS tss,
     ROUND(SUM(distance_m) FILTER (WHERE sport = 'swim'), 0)            AS swim_m,
@@ -145,11 +181,11 @@ SELECT
     COUNT(*) FILTER (WHERE sport = 'strength')                 AS strength_sessions,
     COUNT(*) FILTER (WHERE is_brick)                           AS bricks
 FROM activities
-GROUP BY 1;
+GROUP BY 1, 2;
 
 CREATE OR REPLACE VIEW v_weekly_compliance AS
 SELECT
-    p.week_num, p.phase, p.start_date, p.is_recovery,
+    p.athlete_id, p.week_num, p.phase, p.start_date, p.is_recovery,
     p.planned_hours, a.hours  AS actual_hours,
     ROUND(100 * a.hours  / NULLIF(p.planned_hours, 0), 0) AS hours_pct,
     p.planned_tss,   a.tss    AS actual_tss,
@@ -161,13 +197,12 @@ SELECT
     p.run_km,  a.run_km  AS actual_run_km,
     ROUND(100 * a.run_km  / NULLIF(p.run_km, 0), 0)       AS run_pct
 FROM weekly_plan p
-LEFT JOIN v_weekly_actuals a ON a.week_start = p.start_date;
+LEFT JOIN v_weekly_actuals a
+  ON a.athlete_id = p.athlete_id AND a.week_start = p.start_date;
 
--- Efficiency factor: bike NP/HR, run speed(m/min)/HR on steady sessions.
--- Rising EF at same HR = aerobic fitness gain.
 CREATE OR REPLACE VIEW v_efficiency AS
 SELECT
-    start_time::date AS date, sport,
+    athlete_id, start_time::date AS date, sport,
     CASE
       WHEN sport = 'bike' AND avg_hr > 0 AND norm_power_w IS NOT NULL
         THEN ROUND(norm_power_w::numeric / avg_hr, 3)
@@ -181,10 +216,9 @@ WHERE sport IN ('bike','run')
   AND duration_s >= 2400
   AND COALESCE(intensity_factor, 0) < 0.85;
 
--- Readiness flags: red = back off today.
 CREATE OR REPLACE VIEW v_readiness AS
 SELECT
-    v.date,
+    v.athlete_id, v.date,
     v.resting_hr, v.hrv_ms, v.sleep_hours, v.subjective_fatigue,
     l.ctl, l.atl, l.tsb,
     (v.resting_hr - p.resting_hr_baseline)        AS rhr_delta,
@@ -199,8 +233,10 @@ SELECT
       ELSE 'green'
     END AS readiness
 FROM daily_vitals v
-LEFT JOIN daily_load l USING (date)
-CROSS JOIN LATERAL (
+LEFT JOIN daily_load l USING (athlete_id, date)
+LEFT JOIN LATERAL (
     SELECT resting_hr_baseline, hrv_baseline_ms
-    FROM athlete_profile ORDER BY test_date DESC LIMIT 1
-) p;
+    FROM athlete_profile
+    WHERE athlete_id = v.athlete_id
+    ORDER BY test_date DESC LIMIT 1
+) p ON TRUE;

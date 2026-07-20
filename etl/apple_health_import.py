@@ -25,6 +25,17 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db import connect
 
+ATHLETE_ID = int(os.environ.get("ATHLETE_ID", "1"))
+
+
+def parse_dt(s):
+    """Apple Health export quirk: the time VALUE is UTC but the offset label
+    is local (verified against Strava: winter diff 5h EST, summer 4h EDT).
+    True local wall-clock = naive value + offset. Strava rows store local
+    wall-clock, so the ±10min duplicate window then compares like with like."""
+    dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S %z")
+    return dt.replace(tzinfo=None) + dt.utcoffset()
+
 RECORD_MAP = {
     "HKQuantityTypeIdentifierRestingHeartRate": "resting_hr",
     "HKQuantityTypeIdentifierHeartRateVariabilitySDNN": "hrv_ms",
@@ -79,8 +90,8 @@ def main(path):
                 val = el.get("value", "")
                 if "Asleep" in val:
                     try:
-                        s = datetime.fromisoformat(el.get("startDate"))
-                        e = datetime.fromisoformat(el.get("endDate"))
+                        s = parse_dt(el.get("startDate"))
+                        e = parse_dt(el.get("endDate"))
                         # count sleep toward wake-day
                         day = e.date().isoformat()
                         hrs = (e - s).total_seconds() / 3600
@@ -126,18 +137,21 @@ def main(path):
         cols_sql = ", ".join(vals)
         ph = ", ".join(["%s"] * len(vals))
         con.execute(
-            f"INSERT INTO daily_vitals (date, {cols_sql}) VALUES (%s, {ph}) "
-            f"ON CONFLICT (date) DO UPDATE SET {sets}",
-            [d, *vals.values()])
+            f"INSERT INTO daily_vitals (athlete_id, date, {cols_sql}) "
+            f"VALUES (%s, %s, {ph}) "
+            f"ON CONFLICT (athlete_id, date) DO UPDATE SET {sets}",
+            [ATHLETE_ID, d, *vals.values()])
         n_days += 1
 
     n_wk, n_skip = 0, 0
     for w in workouts:
-        start = datetime.fromisoformat(w["start"])
+        start = parse_dt(w["start"])
         dup = con.execute(
-            """SELECT 1 FROM activities WHERE source = 'strava' AND sport = %s
+            """SELECT 1 FROM activities WHERE athlete_id = %s
+               AND source = 'strava' AND sport = %s
                AND start_time BETWEEN %s AND %s""",
-            (w["sport"], start - timedelta(minutes=10), start + timedelta(minutes=10)),
+            (ATHLETE_ID, w["sport"], start - timedelta(minutes=10),
+             start + timedelta(minutes=10)),
         ).fetchone()
         if dup:
             n_skip += 1
@@ -145,12 +159,12 @@ def main(path):
         ext_id = f"{w['start']}_{w['sport']}"
         con.execute(
             """INSERT INTO activities
-               (source, external_id, sport, start_time, duration_s, distance_m,
-                avg_hr, max_hr, calories, title)
-               VALUES ('apple',%s,%s,%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT (source, external_id) DO UPDATE SET
+               (athlete_id, source, external_id, sport, start_time, duration_s,
+                distance_m, avg_hr, max_hr, calories, title)
+               VALUES (%s,'apple',%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (athlete_id, source, external_id) DO UPDATE SET
                  duration_s = EXCLUDED.duration_s, avg_hr = EXCLUDED.avg_hr""",
-            (ext_id, w["sport"], w["start"], w["dur_s"], w["dist_m"],
+            (ATHLETE_ID, ext_id, w["sport"], w["start"], w["dur_s"], w["dist_m"],
              w["avg_hr"], w["max_hr"], w["kcal"], f"Apple {w['sport']}"))
         n_wk += 1
 

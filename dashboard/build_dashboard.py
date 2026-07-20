@@ -24,6 +24,7 @@ from db import connect
 
 OUT = Path(__file__).parent / "dashboard.html"
 PHOTO = Path(__file__).parent / "profile.png"
+ATHLETE_ID = int(os.environ.get("ATHLETE_ID", "1"))
 
 
 def _num(v):
@@ -34,51 +35,72 @@ def _num(v):
     return v
 
 
-def rows(con, sql, keys):
-    return [dict(zip(keys, [_num(v) for v in r])) for r in con.execute(sql).fetchall()]
+def rows(con, sql, keys, params=()):
+    return [dict(zip(keys, [_num(v) for v in r]))
+            for r in con.execute(sql, params).fetchall()]
 
 
 def fetch(con):
+    A = (ATHLETE_ID,)
     # distances converted to miles at the query edge; storage stays metric
     plan = rows(con, """
         SELECT week_num, phase, start_date::text, planned_hours, planned_tss,
                swim_m, ROUND(bike_km / 1.609344, 1), ROUND(run_km / 1.609344, 1),
                long_ride_min, long_run_min, is_recovery, focus, key_workouts
-        FROM weekly_plan ORDER BY week_num""",
+        FROM weekly_plan WHERE athlete_id = %s ORDER BY week_num""",
         ["week", "phase", "start", "hours", "tss", "swim_m", "bike_mi", "run_mi",
-         "long_ride", "long_run", "recovery", "focus", "key"])
+         "long_ride", "long_run", "recovery", "focus", "key"], A)
     comp = rows(con, """
         SELECT week_num, actual_hours, actual_tss, actual_swim_m,
                ROUND(actual_bike_km / 1.609344, 1), ROUND(actual_run_km / 1.609344, 1)
-        FROM v_weekly_compliance ORDER BY week_num""",
-        ["week", "hours", "tss", "swim_m", "bike_mi", "run_mi"])
+        FROM v_weekly_compliance WHERE athlete_id = %s ORDER BY week_num""",
+        ["week", "hours", "tss", "swim_m", "bike_mi", "run_mi"], A)
     pmc = [[str(r[0])] + [float(x) for x in r[1:]] for r in con.execute(
         """SELECT date::text, ctl, atl, tsb FROM daily_load
-           WHERE date >= CURRENT_DATE - 182 ORDER BY date""").fetchall()]
+           WHERE athlete_id = %s AND date >= CURRENT_DATE - 182
+           ORDER BY date""", A).fetchall()]
     vitals = [[str(r[0])] + [float(x) if x is not None else None for x in r[1:]]
               for r in con.execute(
         """SELECT date::text, resting_hr, hrv_ms, sleep_hours, weight_kg
-           FROM daily_vitals ORDER BY date""").fetchall()]
+           FROM daily_vitals WHERE athlete_id = %s ORDER BY date""", A).fetchall()]
     eff = [[str(r[0]), r[1], float(r[2])] for r in con.execute(
         """SELECT date::text, sport, efficiency_factor FROM v_efficiency
-           WHERE efficiency_factor IS NOT NULL
-             AND date >= CURRENT_DATE - 182 ORDER BY date""").fetchall()]
+           WHERE athlete_id = %s AND efficiency_factor IS NOT NULL
+             AND date >= CURRENT_DATE - 182 ORDER BY date""", A).fetchall()]
     ready = con.execute(
-        "SELECT readiness FROM v_readiness ORDER BY date DESC LIMIT 1").fetchone()
+        """SELECT readiness FROM v_readiness WHERE athlete_id = %s
+           ORDER BY date DESC LIMIT 1""", A).fetchone()
     acts = [[str(r[0]), r[1], _num(r[2]), _num(r[3]), _num(r[4]), _num(r[5]), _num(r[6])]
             for r in con.execute("""
         SELECT start_time::date, sport, ROUND(distance_m/1609.344, 2),
                ROUND(duration_s/3600.0, 2), avg_hr,
                EXTRACT(HOUR FROM start_time)::int, ROUND(COALESCE(tss, 0), 0)
-        FROM activities WHERE duration_s > 0 ORDER BY start_time""").fetchall()]
+        FROM activities WHERE athlete_id = %s AND duration_s > 0
+        ORDER BY start_time""", A).fetchall()]
     efforts = rows(con, """
         SELECT band, meters, year, date::text, est_time, pace_min_mi,
                run_mi, is_all_time_pr
-        FROM v_best_efforts ORDER BY meters, year""",
-        ["band", "meters", "year", "date", "time", "pace", "mi", "pr"])
-    records = rows(con, "SELECT record, value, date FROM v_records",
-                   ["record", "value", "date"])
-    return plan, comp, pmc, vitals, eff, (ready[0] if ready else None), acts, efforts, records
+        FROM v_best_efforts WHERE athlete_id = %s ORDER BY meters, year""",
+        ["band", "meters", "year", "date", "time", "pace", "mi", "pr"], A)
+    records = rows(con, "SELECT record, value, date FROM v_records WHERE athlete_id = %s",
+                   ["record", "value", "date"], A)
+    st_row = con.execute("""
+        SELECT a.name, a.tagline, s.race_date::text, s.ctl_target,
+               s.compliance_goal_pct, s.tsb_race_lo, s.tsb_race_hi
+        FROM athletes a JOIN athlete_settings s ON s.athlete_id = a.id
+        WHERE a.id = %s""", A).fetchone()
+    settings = dict(zip(["name", "tagline", "race_date", "ctl_target",
+                         "compliance_goal_pct", "tsb_race_lo", "tsb_race_hi"],
+                        st_row)) if st_row else {}
+    vm = [[str(r[0])] + [_num(x) for x in r[1:]] for r in con.execute("""
+        SELECT month::text, rhr_avg, rhr_min, rhr_max, hrv_avg, sleep_avg,
+               weight_lb_avg, vo2_avg
+        FROM v_vitals_monthly WHERE athlete_id = %s ORDER BY month""", A).fetchall()]
+    whr = [[str(r[0]), r[1], _num(r[2])] for r in con.execute("""
+        SELECT month::text, sport, avg_hr FROM v_workout_hr_monthly
+        WHERE athlete_id = %s AND sessions >= 3 ORDER BY month""", A).fetchall()]
+    return (plan, comp, pmc, vitals, eff, (ready[0] if ready else None),
+            acts, efforts, records, settings, vm, whr)
 
 
 def demo_data(plan):
@@ -144,11 +166,16 @@ def main():
     args = ap.parse_args()
 
     con = connect()
-    plan, comp, pmc, vitals, eff, ready, acts, efforts, records = fetch(con)
+    (plan, comp, pmc, vitals, eff, ready, acts, efforts, records,
+     settings, vm, whr) = fetch(con)
     con.close()
     photo = None
     if args.demo:
         comp, pmc, vitals, eff, ready, acts, efforts, records = demo_data(plan)
+        vm, whr = [], []
+        settings = {"name": "Demo Athlete", "tagline": "Journey to Ironman 70.3",
+                    "race_date": None, "ctl_target": 65, "compliance_goal_pct": 85,
+                    "tsb_race_lo": 5, "tsb_race_hi": 15}
     elif PHOTO.exists():
         photo = "data:image/png;base64," + base64.b64encode(PHOTO.read_bytes()).decode()
 
@@ -156,13 +183,14 @@ def main():
         "generated": date.today().isoformat(),
         "demo": args.demo,
         "readiness": ready,
-        "profile": {"name": "Demo Athlete" if args.demo else "Santosh Kanthety",
-                    "photo": photo,
-                    "tagline": "Journey to Ironman 70.3"},
+        "profile": {"name": settings.get("name", "Athlete"), "photo": photo,
+                    "tagline": settings.get("tagline") or "Journey to Ironman 70.3"},
+        "settings": settings,
         "plan": plan,
         "actual": [c for c in comp if c.get("hours") is not None],
         "pmc": pmc, "vitals": vitals, "eff": eff,
         "acts": acts, "efforts": efforts, "records": records,
+        "vm": vm, "whr": whr,
     }
     html = TEMPLATE.replace("/*DATA*/null", json.dumps(data))
     OUT.write_text(html)
@@ -348,6 +376,9 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
     background: color-mix(in srgb, var(--good) 8%, transparent); }
   .report ul { margin: 4px 0 0 18px; padding: 0; }
   .report li { margin: 2px 0; }
+  .num-in { background: var(--page); color: var(--ink); font: inherit;
+    font-size: 13px; border: 1px solid var(--axis); border-radius: 8px;
+    padding: 5px 8px; width: 76px; text-align: right; }
 </style>
 <nav>
   <div class="logo">
@@ -360,8 +391,10 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
   <div class="tabs" id="tabs">
     <a href="#dash" data-p="dash" class="on">Dashboard</a>
     <a href="#stats" data-p="stats">Statistics</a>
+    <a href="#health" data-p="health">Health</a>
     <a href="#profile" data-p="profile">Profile</a>
     <a href="#plan" data-p="plan">Plan</a>
+    <a href="#admin" data-p="admin">Admin</a>
     <a href="#guide" data-p="guide">Guide</a>
   </div>
   <div class="navright" id="sub"></div>
@@ -507,6 +540,82 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
   </div>
 </div>
 
+<!-- ============================ HEALTH ============================ -->
+<div class="page" id="page-health">
+  <h1>Health — heart &amp; recovery</h1>
+  <div class="sub">Apple Health vitals across the years. Resting heart rate falling while training rises = aerobic engine growing.</div>
+  <div class="tiles" id="h-tiles"></div>
+  <div class="row">
+    <div class="card">
+      <h2>Resting heart rate — monthly, all years</h2>
+      <div class="note">Monthly average. Hover for the month's min–max spread.</div>
+      <div id="h-rhr"></div>
+    </div>
+    <div class="card">
+      <h2>Resting HR — year over year</h2>
+      <div class="note">Same months compared across years. Lower line = fitter year.</div>
+      <div id="h-rhr-yoy"></div>
+    </div>
+  </div>
+  <div class="row">
+    <div class="card">
+      <h2>Workout heart rate by sport</h2>
+      <div class="note">Monthly average HR on runs and rides (months with ≥3 sessions). Falling at the same pace = efficiency.</div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--s1)"></span>Run</span>
+        <span><span class="sw" style="background:var(--s2)"></span>Bike</span>
+      </div>
+      <div id="h-whr"></div>
+    </div>
+    <div class="card">
+      <h2>HRV — heart rate variability</h2>
+      <div class="note">Monthly average SDNN. Higher = better recovery capacity.</div>
+      <div id="h-hrv"></div>
+    </div>
+  </div>
+  <div class="row">
+    <div class="card">
+      <h2>VO₂max estimate</h2>
+      <div class="note">Apple Watch estimate from outdoor runs/walks.</div>
+      <div id="h-vo2"></div>
+    </div>
+    <div class="card">
+      <h2>Sleep &amp; weight</h2>
+      <div class="note">Monthly average sleep hours and body weight (lb).</div>
+      <div id="h-sleep" class="row" style="gap:8px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ ADMIN ============================ -->
+<div class="page" id="page-admin">
+  <h1>Admin — athletes</h1>
+  <div class="sub">Create athletes and import their Apple Health data. Each athlete gets the template 16-week plan, their own settings, and isolated data.</div>
+  <div id="admin-offline" class="demo-banner" style="display:none">
+    Backend not running — start it with <code>.venv/bin/uvicorn server:app --port 8703</code>
+  </div>
+  <div class="card" id="admin-main" style="display:none">
+    <h2>Athletes</h2>
+    <div class="tablewrap"><table id="admin-list"></table></div>
+    <div class="controls" style="margin-top:14px">
+      <div class="ctrl"><label>New athlete name</label>
+        <input type="text" id="adm-name" style="background:var(--page);color:var(--ink);
+          font:inherit;font-size:13px;border:1px solid var(--axis);border-radius:8px;padding:6px 10px"></div>
+      <button class="btn" id="adm-create">Create athlete</button>
+    </div>
+    <div class="controls" style="margin-top:6px">
+      <div class="ctrl"><label>Import Apple Health for</label><select id="adm-athlete"></select></div>
+      <div class="ctrl" style="flex:1;min-width:280px"><label>Path to export.zip / export.xml on this machine</label>
+        <input type="text" id="adm-path" placeholder="~/Downloads/apple_health_export/export.xml"
+          style="background:var(--page);color:var(--ink);font:inherit;font-size:13px;
+          border:1px solid var(--axis);border-radius:8px;padding:6px 10px"></div>
+      <button class="btn ghost" id="adm-import">Import</button>
+    </div>
+    <div class="note" style="margin-top:6px">Exports run to 100s of MB, so the import reads a file path on this machine rather than a browser upload. Duplicates of Strava workouts are detected and skipped automatically.</div>
+    <div id="admin-report"></div>
+  </div>
+</div>
+
 <!-- ============================ PLAN EDITOR ============================ -->
 <div class="page" id="page-plan">
   <h1>Plan editor</h1>
@@ -515,6 +624,21 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
     Backend not running — read-only view. Start it with:
     <code>.venv/bin/uvicorn server:app --port 8703</code> then open
     <code>http://localhost:8703/#plan</code>
+  </div>
+  <div class="card" id="kickoff-card" style="display:none">
+    <h2>Kickoff — anchor the plan &amp; set your targets</h2>
+    <div class="note">Setting the race date stamps every week's start date so plan-vs-actual, current week, and the countdown all come alive. Targets drive the dashboard rings and the plan checks.</div>
+    <div class="controls">
+      <div class="ctrl"><label>Race date</label>
+        <input type="date" id="ko-race" style="background:var(--page);color:var(--ink);
+          font:inherit;font-size:13px;border:1px solid var(--axis);border-radius:8px;padding:5px 8px"></div>
+      <div class="ctrl"><label>CTL target</label><input type="number" class="num-in" id="ko-ctl"></div>
+      <div class="ctrl"><label>Compliance goal %</label><input type="number" class="num-in" id="ko-comp"></div>
+      <div class="ctrl"><label>Ramp limit %</label><input type="number" class="num-in" id="ko-ramp"></div>
+      <div class="ctrl"><label>Long run cap (min)</label><input type="number" class="num-in" id="ko-lr"></div>
+      <button class="btn" id="ko-save">Kickoff / update</button>
+    </div>
+    <div id="ko-report"></div>
   </div>
   <div class="card" id="plan-tools" style="display:none">
     <div class="controls" style="margin-bottom:0;align-items:center">
@@ -842,21 +966,29 @@ function heatGrid(mount, counts) {
 }
 
 // ============================ render ============================
-const D = DATA, P = D.plan;
+const D = DATA, P = D.plan, SET = D.settings || {};
 const SPORT_COLOR = {run: '--s1', bike: '--s2', swim: '--s3', strength: '--s5', other: '--s6'};
 document.getElementById('gen').textContent = D.generated;
-const raceStart = P[15].start;
-document.getElementById('sub').textContent = raceStart
-  ? 'Race: ' + new Date(new Date(raceStart+'T00:00').getTime()+6*864e5).toDateString()
-  : 'Race date not set';
+const daysToRace = SET.race_date
+  ? Math.round((new Date(SET.race_date+'T00:00') - new Date(D.generated+'T00:00')) / 864e5)
+  : null;
+document.getElementById('sub').textContent = SET.race_date
+  ? `Race ${SET.race_date} · ${daysToRace} days out`
+  : 'Race date not set — kickoff on the Plan page';
 if (D.demo) document.getElementById('banner').innerHTML =
   '<div class="demo-banner">DEMO DATA — run the ETL, then rebuild without --demo.</div>';
 
 // ---- dashboard page ----
 const lastLoad = D.pmc[D.pmc.length - 1];
 const actual = D.actual;
-const curWeek = actual.length ? actual[actual.length - 1] : null;
-const curPlan = curWeek ? P[curWeek.week - 1] : P[0];
+// current week comes from the kickoff-anchored dates; fallback: latest actuals
+const dateWeek = P.find(p => p.start && p.start <= D.generated &&
+  D.generated < new Date(new Date(p.start+'T00:00').getTime()+7*864e5).toISOString().slice(0,10));
+const actualWeek = actual.length ? actual[actual.length - 1] : null;
+const curPlan = dateWeek || (actualWeek ? P[actualWeek.week - 1] : P[0]);
+const curWeek = dateWeek
+  ? (actual.find(a => a.week === dateWeek.week) || {week: dateWeek.week, hours: 0})
+  : actualWeek;
 const READY = {green: ['--good', 'GO'], yellow: ['--warn', 'EASY'], red: ['--crit', 'REST']};
 function ringSvg(frac, color, txt) {
   const r = 19, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, frac));
@@ -869,16 +1001,19 @@ function ringSvg(frac, color, txt) {
 }
 const compPct = curWeek && curPlan ? Math.round(100 * curWeek.hours / curPlan.hours) : null;
 const rdy = D.readiness && READY[D.readiness];
+const ctlT = SET.ctl_target || 65, compG = SET.compliance_goal_pct || 85;
 const tiles = [
-  ['Current week', curWeek ? `W${curWeek.week}` : '—', curPlan ? `${curPlan.phase} phase` : '',
+  ['Current week', curWeek ? `W${curWeek.week}` : '—',
+   curPlan ? `${curPlan.phase} phase` + (daysToRace != null ? ` · ${daysToRace}d to race` : '') : '',
    curWeek ? ringSvg(curWeek.week / 16, '--brand', `${16 - curWeek.week}`) : ''],
-  ['CTL · Fitness', lastLoad ? lastLoad[1].toFixed(0) : '—', 'target 55–70 by race',
-   lastLoad ? ringSvg(lastLoad[1] / 65, '--s1', Math.round(100 * lastLoad[1] / 65) + '%') : ''],
+  ['CTL · Fitness', lastLoad ? lastLoad[1].toFixed(0) : '—', `target ${ctlT} by race`,
+   lastLoad ? ringSvg(lastLoad[1] / ctlT, '--s1', Math.round(100 * lastLoad[1] / ctlT) + '%') : ''],
   ['ATL · Fatigue', lastLoad ? lastLoad[2].toFixed(0) : '—', '7-day load', ''],
   ['TSB · Form', lastLoad ? (lastLoad[3] > 0 ? '+' : '') + lastLoad[3].toFixed(0) : '—',
-   'race day: +5 to +15', ''],
-  ['Week compliance', compPct !== null ? compPct + '%' : '—', 'hours vs plan · goal ≥85%',
-   compPct !== null ? ringSvg(compPct / 100, compPct >= 85 ? '--s2' : '--s3', '') : ''],
+   `race day: +${SET.tsb_race_lo ?? 5} to +${SET.tsb_race_hi ?? 15}`, ''],
+  ['Week compliance', compPct !== null ? compPct + '%' : '—',
+   `hours vs plan · goal ≥${compG}%`,
+   compPct !== null ? ringSvg(compPct / 100, compPct >= compG ? '--s2' : '--s3', '') : ''],
   ['Readiness', rdy ? `<span class="badge" style="color:var(${rdy[0]})">${D.readiness.toUpperCase()}</span>` : '—',
    'from RHR/HRV/sleep/TSB', rdy ? ringSvg(1, rdy[0], rdy[1]) : ''],
 ];
@@ -898,9 +1033,9 @@ const week = curWeek ? curWeek.week : 0;
 document.getElementById('planprog').style.width = Math.round(100 * week / 16) + '%';
 document.getElementById('planprog-note').textContent =
   week ? `Week ${week} of 16 — ${curPlan.phase} phase` : 'Plan not started';
-document.getElementById('planprog-hint').textContent = raceStart
-  ? 'Race: ' + new Date(new Date(raceStart+'T00:00').getTime()+6*864e5).toDateString()
-  : 'Set race date: seed_plan.py YYYY-MM-DD';
+document.getElementById('planprog-hint').textContent = SET.race_date
+  ? `Race ${SET.race_date} · ${daysToRace} days out`
+  : 'Kickoff the race date on the Plan page';
 
 if (D.pmc.length)
   lineChart(document.getElementById('pmc'), [
@@ -1223,6 +1358,168 @@ async function initPlan() {
   };
 }
 initPlan();
+
+// ---- health page ----
+(function renderHealth() {
+  const VM = D.vm;   // [month, rhr_avg, rhr_min, rhr_max, hrv, sleep, weight_lb, vo2]
+  const ht = document.getElementById('h-tiles');
+  if (!VM.length) {
+    ht.innerHTML = '<div class="demo-banner">No Apple Health data yet — import on the Admin page.</div>';
+    return;
+  }
+  const V = D.vitals;                       // daily [date, rhr, hrv, sleep, weight]
+  const last7 = V.slice(-7);
+  const avg = (arr, i) => { const v = arr.map(r => r[i]).filter(x => x != null);
+    return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+  const rhr7 = avg(last7, 1), hrv7 = avg(last7, 2), slp7 = avg(last7, 3);
+  const yearAgo = VM.filter(r => r[0].slice(0, 4) === '' + (+D.generated.slice(0, 4) - 1));
+  const rhrYA = yearAgo.length ? yearAgo.reduce((s, r) => s + (r[1] || 0), 0) / yearAgo.length : null;
+  const vo2 = [...VM].reverse().find(r => r[7] != null);
+  const delta = rhr7 && rhrYA ? (rhr7 - rhrYA).toFixed(0) : null;
+  ht.innerHTML = [
+    ['Resting HR · 7d', rhr7 ? rhr7.toFixed(0) : '—',
+     delta != null ? `${delta > 0 ? '+' : ''}${delta} bpm vs last year` : 'bpm'],
+    ['HRV · 7d', hrv7 ? hrv7.toFixed(0) : '—', 'ms SDNN'],
+    ['Sleep · 7d', slp7 ? slp7.toFixed(1) : '—', 'hours/night'],
+    ['VO₂max', vo2 ? vo2[7].toFixed(1) : '—', vo2 ? `Apple est. · ${vo2[0].slice(0, 7)}` : ''],
+  ].map(t => `<div class="tile"><div><div class="lbl">${t[0]}</div>
+    <div class="val">${t[1]}</div><div class="hint">${t[2]}</div></div></div>`).join('');
+
+  const rhrMount = document.getElementById('h-rhr');
+  lineChart(rhrMount, [{name: 'RHR', color: '--s1',
+    pts: VM.map(r => [r[0], r[1]])}], {h: 210, fmt: v => v.toFixed(0),
+    xfmt: d => d.slice(0, 7)});
+  // year-over-year overlay
+  const years = [...new Set(VM.map(r => r[0].slice(0, 4)))].slice(-5);
+  const YO = ['--s1', '--s2', '--s3', '--s5', '--s6'];
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  lineChart(document.getElementById('h-rhr-yoy'),
+    years.map((y, i) => ({name: y, color: YO[i], pts: MONTHS.map((mo, mi2) => {
+      const row = VM.find(r => r[0].slice(0, 4) === y && +r[0].slice(5, 7) === mi2 + 1);
+      return [mo, row ? row[1] : null];
+    })})), {h: 210, fmt: v => v.toFixed(0)});
+
+  const whrDates = [...new Set(D.whr.map(r => r[0]))].sort();
+  if (whrDates.length) {
+    const mk = sp => whrDates.map(d => {
+      const row = D.whr.find(r => r[0] === d && r[1] === sp);
+      return [d, row ? row[2] : null];
+    });
+    lineChart(document.getElementById('h-whr'), [
+      {name: 'Run', color: '--s1', pts: mk('run')},
+      {name: 'Bike', color: '--s2', pts: mk('bike')},
+    ], {h: 210, fmt: v => v.toFixed(0), xfmt: d => d.slice(0, 7)});
+  }
+  const hrvPts = VM.filter(r => r[4] != null).map(r => [r[0], r[4]]);
+  if (hrvPts.length) lineChart(document.getElementById('h-hrv'),
+    [{name: 'HRV', color: '--s2', pts: hrvPts}],
+    {h: 210, fmt: v => v.toFixed(0), xfmt: d => d.slice(0, 7)});
+  else document.getElementById('h-hrv').innerHTML = '<div class="note">No HRV data.</div>';
+  const vo2Pts = VM.filter(r => r[7] != null).map(r => [r[0], r[7]]);
+  if (vo2Pts.length) lineChart(document.getElementById('h-vo2'),
+    [{name: 'VO2max', color: '--s5', pts: vo2Pts}],
+    {h: 210, fmt: v => v.toFixed(1), xfmt: d => d.slice(0, 7)});
+  else document.getElementById('h-vo2').innerHTML = '<div class="note">No VO₂max data.</div>';
+  const sw = document.getElementById('h-sleep');
+  miniLine(sw, 'Sleep (h/night)', VM.filter(r => r[5] != null).map(r => [r[0], r[5]]),
+    '--s1', v => v.toFixed(1));
+  const wPts = VM.filter(r => r[6] != null).map(r => [r[0], r[6]]);
+  if (wPts.length) miniLine(sw, 'Weight (lb)', wPts, '--s2', v => v.toFixed(0));
+})();
+
+// ---- kickoff (plan page) ----
+async function initKickoff() {
+  let s = null;
+  try {
+    const r = await fetch('/api/settings');
+    if (r.ok) s = await r.json();
+  } catch (e) {}
+  const card = document.getElementById('kickoff-card');
+  if (!s) return;                       // offline: card stays hidden
+  card.style.display = '';
+  document.getElementById('ko-race').value = s.race_date || '';
+  document.getElementById('ko-ctl').value = s.ctl_target;
+  document.getElementById('ko-comp').value = s.compliance_goal_pct;
+  document.getElementById('ko-ramp').value = s.ramp_limit_pct;
+  document.getElementById('ko-lr').value = s.long_run_cap_min;
+  const btn = document.getElementById('ko-save');
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = 'Saving…';
+    const body = {
+      race_date: document.getElementById('ko-race').value || null,
+      ctl_target: document.getElementById('ko-ctl').value,
+      compliance_goal_pct: document.getElementById('ko-comp').value,
+      ramp_limit_pct: document.getElementById('ko-ramp').value,
+      long_run_cap_min: document.getElementById('ko-lr').value,
+    };
+    try {
+      const r = await fetch('/api/settings', {method: 'PUT',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+      const rep = await r.json();
+      const box = document.getElementById('ko-report');
+      box.innerHTML = `<div class="report ${rep.applied ? 'ok' : 'err'}">
+        <b>${rep.applied ? 'Kickoff saved — reloading with new dates…' : 'Blocked:'}</b>
+        <ul>${[...rep.errors, ...rep.warnings].map(m => `<li>${m}</li>`).join('')}</ul></div>`;
+      if (rep.applied) setTimeout(() => location.reload(), 1600);
+    } catch (e) {}
+    btn.disabled = false; btn.textContent = 'Kickoff / update';
+  };
+}
+initKickoff();
+
+// ---- admin page ----
+async function initAdmin() {
+  let list = null;
+  try {
+    const r = await fetch('/api/admin/athletes');
+    if (r.ok) list = await r.json();
+  } catch (e) {}
+  const offline = !list;
+  document.getElementById('admin-offline').style.display = offline ? '' : 'none';
+  document.getElementById('admin-main').style.display = offline ? 'none' : '';
+  if (offline) return;
+  const render = rows => {
+    document.getElementById('admin-list').innerHTML =
+      `<tr><th>ID</th><th>Name</th><th>Race date</th><th>Activities</th>
+       <th>Vitals days</th><th>Plan weeks</th></tr>` +
+      rows.map(a => `<tr><td>${a.id}</td><td class="key">${a.name}</td>
+        <td>${a.race_date || '—'}</td><td>${a.activities.toLocaleString()}</td>
+        <td>${a.vitals_days.toLocaleString()}</td><td>${a.plan_weeks}</td></tr>`).join('');
+    const sel = document.getElementById('adm-athlete');
+    sel.innerHTML = '';
+    rows.forEach(a => sel.add(new Option(`${a.id} · ${a.name}`, a.id)));
+  };
+  render(list);
+  const report = rep => {
+    document.getElementById('admin-report').innerHTML =
+      `<div class="report ${rep.applied ? 'ok' : 'err'}">
+       <b>${rep.applied ? 'Done.' : 'Blocked:'}</b>
+       <ul>${[...rep.errors, ...rep.warnings].map(m => `<li>${m}</li>`).join('')}</ul></div>`;
+  };
+  document.getElementById('adm-create').onclick = async () => {
+    const name = document.getElementById('adm-name').value;
+    const r = await fetch('/api/admin/athletes', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name})});
+    report(await r.json());
+    const l = await (await fetch('/api/admin/athletes')).json();
+    render(l);
+  };
+  document.getElementById('adm-import').onclick = async () => {
+    const btn = document.getElementById('adm-import');
+    btn.disabled = true; btn.textContent = 'Importing… (large exports take minutes)';
+    try {
+      const r = await fetch('/api/admin/import/apple', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          athlete_id: document.getElementById('adm-athlete').value,
+          path: document.getElementById('adm-path').value})});
+      report(await r.json());
+      render(await (await fetch('/api/admin/athletes')).json());
+    } catch (e) {}
+    btn.disabled = false; btn.textContent = 'Import';
+  };
+}
+initAdmin();
 
 route();
 </script>

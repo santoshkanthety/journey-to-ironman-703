@@ -5,10 +5,13 @@ Usage:
     .venv/bin/python seed_plan.py                # week numbers only
     .venv/bin/python seed_plan.py 2026-11-08     # race date (Sunday) -> start_date per week
 """
+import os
 import sys
 from datetime import date, timedelta
 
 from db import connect
+
+ATHLETE_ID = int(os.environ.get("ATHLETE_ID", "1"))
 
 # week, phase, hours, tss, swim_m, bike_km, run_km,
 # swim/bike/run sessions, strength, long_ride_min, long_run_min, recovery, focus, key_workouts
@@ -108,11 +111,12 @@ def week_days(wk, phase, recovery, st, long_ride, long_run):
     return days
 
 
-def seed(race_date):
+def seed(race_date, athlete_id=None):
+    aid = athlete_id if athlete_id is not None else ATHLETE_ID
     con = connect()
     cur = con.cursor()
-    cur.execute("DELETE FROM planned_workouts")
-    cur.execute("DELETE FROM weekly_plan")
+    cur.execute("DELETE FROM planned_workouts WHERE athlete_id = %s", (aid,))
+    cur.execute("DELETE FROM weekly_plan WHERE athlete_id = %s", (aid,))
 
     for row in PLAN:
         (wk, phase, hours, tss, swim_m, bike_km, run_km,
@@ -123,20 +127,20 @@ def seed(race_date):
             start = monday_w16 - timedelta(weeks=16 - wk)
         cur.execute(
             """INSERT INTO weekly_plan
-               (week_num, phase, start_date, planned_hours, planned_tss,
+               (athlete_id, week_num, phase, start_date, planned_hours, planned_tss,
                 swim_m, bike_km, run_km, swim_sessions, bike_sessions,
                 run_sessions, strength_sessions, long_ride_min, long_run_min,
                 is_recovery, focus, key_workouts)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (wk, phase, start, hours, tss, swim_m, bike_km, run_km,
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (aid, wk, phase, start, hours, tss, swim_m, bike_km, run_km,
              s, b, r, st, long_ride, long_run, bool(rec), focus, key),
         )
         for dow, sport, title, intensity, mins in week_days(wk, phase, rec, st, long_ride, long_run):
             cur.execute(
                 """INSERT INTO planned_workouts
-                   (week_num, day_of_week, sport, title, intensity, duration_min)
-                   VALUES (%s,%s,%s,%s,%s,%s)""",
-                (wk, dow, sport, title, intensity, mins),
+                   (athlete_id, week_num, day_of_week, sport, title, intensity, duration_min)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                (aid, wk, dow, sport, title, intensity, mins),
             )
 
     con.commit()

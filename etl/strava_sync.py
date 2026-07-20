@@ -45,10 +45,14 @@ def access_token():
     return r.json()["access_token"]
 
 
+ATHLETE_ID = int(os.environ.get("ATHLETE_ID", "1"))
+
+
 def thresholds(con):
     row = con.execute(
         """SELECT ftp_watts, run_threshold_pace_s_km, css_pace_s_100m, lthr_bike, lthr_run
-           FROM athlete_profile ORDER BY test_date DESC LIMIT 1"""
+           FROM athlete_profile WHERE athlete_id = %s
+           ORDER BY test_date DESC LIMIT 1""", (ATHLETE_ID,)
     ).fetchone()
     return row or (None, None, None, None, None)
 
@@ -99,15 +103,15 @@ def main(days):
                                    pace_km, pace_100, thr)
             con.execute(
                 """INSERT INTO activities
-                   (source, external_id, sport, start_time, duration_s, moving_s,
+                   (athlete_id, source, external_id, sport, start_time, duration_s, moving_s,
                     distance_m, elevation_gain_m, avg_hr, max_hr, avg_power_w,
                     norm_power_w, avg_cadence, avg_pace_s_km, avg_pace_s_100m,
                     intensity_factor, tss, calories, title, raw_json)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                   ON CONFLICT (source, external_id) DO UPDATE SET
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (athlete_id, source, external_id) DO UPDATE SET
                      tss = EXCLUDED.tss, intensity_factor = EXCLUDED.intensity_factor,
                      avg_hr = EXCLUDED.avg_hr, raw_json = EXCLUDED.raw_json""",
-                ("strava", str(a["id"]), sport, a["start_date_local"],
+                (ATHLETE_ID, "strava", str(a["id"]), sport, a["start_date_local"],
                  a.get("elapsed_time"), mov, dist, a.get("total_elevation_gain"),
                  a.get("average_heartrate"), a.get("max_heartrate"),
                  a.get("average_watts"), np_w, a.get("average_cadence"),

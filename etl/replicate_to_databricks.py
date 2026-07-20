@@ -46,6 +46,10 @@ WHITELIST = [
     ("v_records",           "records"),
     ("v_run_load_ratio",    "run_load_ratio"),
     ("v_efficiency",        "efficiency"),
+    ("athletes",            "athletes"),
+    ("athlete_settings",    "athlete_settings"),
+    ("v_vitals_monthly",    "vitals_monthly"),
+    ("v_workout_hr_monthly", "workout_hr_monthly"),
 ]
 
 
