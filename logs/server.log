@@ -1,0 +1,15 @@
+INFO:     Started server process [80734]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8703 (Press CTRL+C to quit)
+INFO:     127.0.0.1:49902 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49933 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49942 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49933 - "GET /api/plan HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49935 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49937 - "GET /api/admin/athletes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49963 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49972 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49963 - "GET /api/plan HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49965 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49967 - "GET /api/admin/athletes HTTP/1.1" 200 OK

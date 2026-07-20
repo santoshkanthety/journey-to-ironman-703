@@ -605,7 +605,10 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
   <h1>Admin — athletes</h1>
   <div class="sub">Create athletes and import their Apple Health data. Each athlete gets the template 16-week plan, their own settings, and isolated data.</div>
   <div id="admin-offline" class="demo-banner" style="display:none">
-    Backend not running — start it with <code>.venv/bin/uvicorn server:app --port 8703</code>
+    Read-only view — you're looking at the static file. Admin needs the app
+    server: open <a href="http://localhost:8703/#admin">http://localhost:8703/#admin</a>.
+    The server auto-starts via launchd; if it's down:
+    <code>.venv/bin/uvicorn server:app --port 8703</code>
   </div>
   <div class="card" id="admin-main" style="display:none">
     <h2>Athletes</h2>
@@ -634,9 +637,10 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
   <h1>Plan editor</h1>
   <div class="sub">Edit inline or upload a CSV — every save runs data-quality checks against the backend before anything lands.</div>
   <div id="plan-offline" class="demo-banner" style="display:none">
-    Backend not running — read-only view. Start it with:
-    <code>.venv/bin/uvicorn server:app --port 8703</code> then open
-    <code>http://localhost:8703/#plan</code>
+    Read-only view — you're looking at the static file. Plan editing needs the
+    app server: open <a href="http://localhost:8703/#plan">http://localhost:8703/#plan</a>.
+    The server auto-starts via launchd; if it's down:
+    <code>.venv/bin/uvicorn server:app --port 8703</code>
   </div>
   <div class="card" id="kickoff-card" style="display:none">
     <h2>Kickoff — anchor the plan &amp; set your targets</h2>
@@ -686,7 +690,24 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
       <tr><td><b>EF</b></td><td class="key">Efficiency Factor — bike: power÷HR, run: speed÷HR on steady sessions.</td><td class="key">Rising EF at the same HR = aerobic engine growing.</td></tr>
       <tr><td><b>ACWR</b></td><td class="key">Acute:Chronic Workload Ratio — this week's run miles ÷ 4-week average.</td><td class="key">Safe 0.8–1.3. Above 1.5 = injury-risk ramp.</td></tr>
       <tr><td><b>Readiness</b></td><td class="key">Daily green/yellow/red from resting HR, HRV, sleep and TSB vs your baselines.</td><td class="key">Red = recovery day. No exceptions.</td></tr>
+      <tr><td><b>Resting HR</b></td><td class="key">Morning heart rate from Apple Watch. The cheapest fitness and fatigue signal there is.</td><td class="key">Trending down over months = fitter. +5–7 bpm overnight = incoming illness or under-recovery.</td></tr>
+      <tr><td><b>HRV (SDNN)</b></td><td class="key">Beat-to-beat variability. Reflects autonomic recovery capacity.</td><td class="key">Compare only against your own range — absolute numbers vary hugely between people.</td></tr>
+      <tr><td><b>VO₂max</b></td><td class="key">Apple's estimate of aerobic ceiling from outdoor runs.</td><td class="key">42+ is excellent for the 40s age group. Slow-moving — check monthly, not daily.</td></tr>
+      <tr><td><b>Sleep</b></td><td class="key">Nightly hours from the watch. The #1 recovery lever.</td><td class="key">≥7h in build weeks. Under 6h, adaptation from hard training simply doesn't happen.</td></tr>
     </table></div>
+
+    <h2 style="margin-top:22px">Color language — green · yellow · red</h2>
+    <p>One consistent status vocabulary everywhere, always paired with a shape so it never relies on color alone:
+    <span style="color:var(--good)">● green = good</span> — carry on ·
+    <span style="color:var(--warn)">▲ yellow = watch</span> — fine today, a trend if it persists ·
+    <span style="color:var(--crit)">■ red = risk</span> — act now (recover, sleep, back off).</p>
+    <p>Where you'll see it: the <b>Readiness tile</b> (daily train/easy/rest call from RHR, HRV, sleep, TSB), <b>Health tile badges</b> (7-day state per vital), and <b>zone bands behind the health charts</b>. Sleep and VO₂max bands are fixed standards (7h/6h; 42/35); resting HR and HRV bands are personal — computed from your own history's percentiles, so they recalibrate as you get fitter.</p>
+
+    <h2 style="margin-top:22px">Kickoff &amp; settings (Plan page)</h2>
+    <p>Kickoff anchors everything: set the race date and every week gets a start date so week 16 contains race day. From that moment the current-week tile, plan-vs-actual compliance, countdown, and plan progress all run off the calendar. The targets are yours to tune per athlete: <b>CTL target</b> (fitness goal by race), <b>compliance goal</b> (default ≥85%), <b>ramp limit</b> (weekly hours growth warning, default 30%), <b>long-run cap</b> (injury guard, default 150min). Every save is validated — impossible values are blocked, risky ones warn.</p>
+
+    <h2 style="margin-top:22px">The connected workflow</h2>
+    <p><b>Admin</b> — create an athlete, import their Apple Health export (Strava duplicates are detected and skipped automatically). → <b>Plan</b> — kickoff the race date, tune targets, edit weeks inline or by CSV round-trip; every save passes data-quality checks. → <b>Dashboard</b> — the daily view: readiness before training, rings and compliance after. → <b>Health</b> — the weekly recovery review: are the lines in the green bands? → <b>Statistics</b> — the monthly deep-dive with slice &amp; dice. → <b>Profile</b> — the trophy case: best efforts and records.</p>
 
     <h2 style="margin-top:22px">How to read the charts</h2>
     <h3>Performance Management (Dashboard)</h3>
@@ -699,7 +720,10 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
     <p>Only steady sessions ≥ 40 min count. The absolute number matters less than the drift: a rising line at the same heart rate is aerobic fitness you can bank for race day.</p>
 
     <h2 style="margin-top:22px">How to use the platform</h2>
-    <p>Weekly rhythm (each command idempotent — safe to re-run):</p>
+    <p>Mostly hands-off: the backend server and the 06:30 daily sync both run
+    automatically via launchd. Open <code>http://localhost:8703</code> — plan
+    editing, kickoff, and admin need that URL (the standalone HTML file is
+    read-only). Manual refresh when wanted:</p>
     <p><code>source ~/.ironman.env</code> then<br>
     <code>etl/strava_sync.py --days 14</code> → pull workouts ·
     <code>etl/apple_health_import.py export.zip</code> → vitals ·
@@ -733,6 +757,9 @@ const ICONS = {
   waves: '<path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/>',
   bike: '<circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm-3 11.5V14l-3-3 4-3 2 3h2"/>',
   zap: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  trophy: '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21 1.18.54 2.03 2.03 2.03 3.79"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>',
+  ruler: '<path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.4 2.4 0 0 1 0-3.4l2.6-2.6a2.4 2.4 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2M11.5 9.5l2-2M8.5 6.5l2-2M17.5 15.5l2-2"/>',
   dumbbell: '<path d="m6.5 6.5 11 11M21 21l-1-1M3 3l1 1M18 22l4-4M2 6l4-4M3 10l7-7M14 21l7-7"/>',
   target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
   user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
@@ -1296,12 +1323,12 @@ document.getElementById('hero').innerHTML = `
     <h1>${pr.name}</h1>
     <div class="tag">▲ ${pr.tagline} · training since ${first}</div>
     <div class="statchips">
-      <div class="statchip"><b>${tot.n.toLocaleString()}</b>activities</div>
-      <div class="statchip"><b>${Math.round(tot.hours).toLocaleString()}</b>hours</div>
-      <div class="statchip"><b>${Math.round(tot.runmi).toLocaleString()} mi</b>run</div>
-      <div class="statchip"><b>${Math.round(tot.bikemi).toLocaleString()} mi</b>bike</div>
-      <div class="statchip"><b>${tot.longrun.toFixed(1)} mi</b>longest run</div>
-      <div class="statchip"><b>${tot.longride.toFixed(1)} mi</b>longest ride</div>
+      <div class="statchip"><span style="color:var(--brand)">${icon('activity')}</span><b>${tot.n.toLocaleString()}</b>activities</div>
+      <div class="statchip"><span style="color:var(--s5)">${icon('clock')}</span><b>${Math.round(tot.hours).toLocaleString()}</b>hours</div>
+      <div class="statchip"><span style="color:var(--s1)">${icon('zap')}</span><b>${Math.round(tot.runmi).toLocaleString()} mi</b>run</div>
+      <div class="statchip"><span style="color:var(--s2)">${icon('bike')}</span><b>${Math.round(tot.bikemi).toLocaleString()} mi</b>bike</div>
+      <div class="statchip"><span style="color:var(--s1)">${icon('ruler')}</span><b>${tot.longrun.toFixed(1)} mi</b>longest run</div>
+      <div class="statchip"><span style="color:var(--s2)">${icon('ruler')}</span><b>${tot.longride.toFixed(1)} mi</b>longest ride</div>
     </div>
   </div>`;
 
@@ -1309,7 +1336,8 @@ const prs = D.efforts.filter(e => e.pr);
 document.getElementById('pr-table').innerHTML =
   `<tr><th>Distance</th><th>Activity</th><th>Time</th><th>Pace</th><th>Date</th><th>Full run</th></tr>` +
   prs.map(e => `<tr><td><b>${e.band}</b> <span class="pr-star">★</span></td>
-    <td class="key">run</td><td>${e.time}</td><td>${e.pace} /mi</td>
+    <td class="key"><span style="color:var(--s1)">${icon('zap')}</span> run</td>
+    <td>${e.time}</td><td>${e.pace} /mi</td>
     <td>${e.date}</td><td>${e.mi} mi</td></tr>`).join('') ||
   '<tr><td class="key">No efforts yet.</td></tr>';
 
