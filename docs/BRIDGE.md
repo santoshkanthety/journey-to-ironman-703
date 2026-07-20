@@ -43,16 +43,22 @@ Two products, one product vision, zero shared code.
 | Feature | Local | SaaS | Next |
 |---|---|---|---|
 | Strava sync | ✅ API script + daily launchd | ✅ OAuth + sync | — |
-| CTL/ATL/TSB engine | ✅ | ⚠️ verify vs spec | audit dashboard math against METRICS_SPEC |
+| CTL/ATL/TSB engine | ✅ | ✅ spec-aligned (TSB lag, pace/CSS IF, tiered fallback) | — |
+| ACWR | ✅ run-miles | ✅ run-miles | — |
 | 16-week plan + editor + DQ checks | ✅ | ⚠️ plan route exists | port validation rules (spec §plan checks) |
-| Kickoff (race date anchor + targets) | ✅ | ❌ | promote next — spec §kickoff |
-| Readiness (green/yellow/red) | ✅ | ❌ | needs vitals source on SaaS |
-| Health page (RHR/HRV/sleep/VO₂ zones) | ✅ | ❌ | needs Apple Health ingestion |
-| Apple Health import (dedupe vs Strava) | ✅ | ❌ | SaaS: file upload + edge function, spec §dedupe |
+| Kickoff (race date anchor + targets) | ✅ | ⚠️ race_date in profiles | anchor weekly_plan + targets |
+| Readiness (green/yellow/red) | ✅ | ❌ | vitals now exist — promote next |
+| Health page (RHR/HRV/sleep/VO₂ zones) | ✅ | ✅ /health with zone bands + badges | — |
+| Apple Health import (dedupe vs Strava) | ✅ local ETL | ✅ client-side parse + import_apple_health RPC | — |
 | Statistics slice & dice | ✅ | ❌ | promote after kickoff |
 | Best efforts / records / profile | ✅ | ❌ | cheap win from activities data |
 | Auth / billing / onboarding | n/a | ✅ | — |
 | Databricks analytics | ✅ | n/a | local-only |
+
+Known SaaS debt: timestamps stored as true UTC (Strava `start_date`); day
+bucketing uses UTC dates. Correct move later: store `profiles.timezone` and
+bucket in user-local time. Apple workouts import as true UTC (the export's
+value component), so cross-source dedupe is consistent.
 
 ## Workflow with the builder (Claude)
 

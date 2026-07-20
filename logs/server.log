@@ -13,3 +13,12 @@ INFO:     127.0.0.1:49972 - "GET /favicon.ico HTTP/1.1" 404 Not Found
 INFO:     127.0.0.1:49963 - "GET /api/plan HTTP/1.1" 200 OK
 INFO:     127.0.0.1:49965 - "GET /api/settings HTTP/1.1" 200 OK
 INFO:     127.0.0.1:49967 - "GET /api/admin/athletes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49990 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49990 - "GET /api/plan HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49993 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50001 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49996 - "GET /api/admin/athletes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51046 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51047 - "GET /api/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51046 - "GET /api/plan HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51049 - "GET /api/admin/athletes HTTP/1.1" 200 OK

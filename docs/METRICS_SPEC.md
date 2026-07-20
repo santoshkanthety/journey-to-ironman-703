@@ -15,10 +15,12 @@ differ (Python/Postgres vs TypeScript/Supabase); numbers may not.
 | IF (run) | `threshold_pace_s_km / actual_pace_s_km` |
 | IF (swim) | `css_pace_s_100m / actual_pace_s_100m` |
 | IF (HR fallback) | `avg_hr / lthr_sport` |
+| IF (no data fallback) | flat per sport: bike 0.68 · run 0.71 · swim 0.75 · strength 0.55 · other 0.55 |
+| IF caps | power ≤1.3 · pace ≤1.2 (run) / ≤1.15 (swim) · HR ≤1.15 |
 | TSS (bike) | `hours × IF² × 100` |
 | TSS (run) | `hours × IF² × 100` |
 | TSS (swim) | `hours × IF³ × 100` |
-| TSS (no data) | `hours × 50` |
+| TSS (no data) | `hours × IF_fallback² × 100` (³ for swim) |
 | CTL | EMA of daily TSS, k = `1 − e^(−1/42)` |
 | ATL | EMA of daily TSS, k = `1 − e^(−1/7)` |
 | TSB | `yesterday's CTL − yesterday's ATL` |

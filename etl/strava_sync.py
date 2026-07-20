@@ -74,7 +74,10 @@ def compute_tss(sport, dur_s, np_w, avg_hr, pace_s_km, pace_s_100m, thr):
     if avg_hr and lthr:
         intensity = avg_hr / lthr
         return round(hours * intensity * intensity * 100, 1), round(intensity, 2)
-    return round(hours * 50, 1), None            # crude fallback: 50 TSS/h
+    # spec: tiered flat-IF fallback when no power/pace/HR threshold available
+    flat = {"bike": 0.68, "run": 0.71, "swim": 0.75, "strength": 0.55}.get(sport, 0.55)
+    exp = 3 if sport == "swim" else 2
+    return round(hours * flat ** exp * 100, 1), flat
 
 
 def main(days):

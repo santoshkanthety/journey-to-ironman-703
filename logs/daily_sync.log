@@ -39,3 +39,32 @@ Audit — files uploaded to Databricks:
   efficiency.csv (1055 rows)
 Nothing outside ironman schema was read.
 ===== 2026-07-19 20:09:51 done (fail=0) =====
+===== 2026-07-20 06:32:01 daily sync start =====
+--- strava sync
+/Users/santosh/ironman-703/.venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+Upserted 4 Strava activities (last 7 days)
+--- compute metrics
+athlete 1: 2017-06-04 -> 2026-07-20. CTL 6, ATL 6, TSB -1
+--- rebuild dashboard
+Wrote /Users/santosh/ironman-703/dashboard/dashboard.html (live: 2176 activities, 34 effort rows)
+--- databricks replicate
+Ensuring workspace.ironman + volume...
+Traceback (most recent call last):
+  File "/Users/santosh/ironman-703/etl/replicate_to_databricks.py", line 119, in <module>
+    main()
+  File "/Users/santosh/ironman-703/etl/replicate_to_databricks.py", line 88, in main
+    run_sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
+  File "/Users/santosh/ironman-703/etl/replicate_to_databricks.py", line 66, in run_sql
+    out = json.loads(dbx("api", "post", "/api/2.0/sql/statements",
+  File "/Users/santosh/ironman-703/etl/replicate_to_databricks.py", line 58, in dbx
+    r = subprocess.run(cmd, capture_output=True, text=True,
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py", line 505, in run
+    with Popen(*popenargs, **kwargs) as process:
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py", line 951, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py", line 1821, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'databricks'
+!!! step failed (exit 1)
+===== 2026-07-20 06:32:04 done (fail=1) =====
