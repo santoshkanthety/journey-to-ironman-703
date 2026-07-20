@@ -248,8 +248,9 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
   .page { display: none; } .page.on { display: block; }
   h1 { font-size: 21px; margin: 4px 0 2px; }
   .sub { color: var(--ink-2); font-size: 13px; margin-bottom: 18px; }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr));
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit,minmax(175px,1fr));
     gap: 12px; margin-bottom: 18px; }
+  .tile { min-width: 0; overflow: hidden; }
   .tile { background: var(--surface-1); border: 1px solid var(--border);
     border-radius: 14px; padding: 14px 16px; display: flex; gap: 10px;
     align-items: center; justify-content: space-between; }
@@ -379,6 +380,10 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
   .num-in { background: var(--page); color: var(--ink); font: inherit;
     font-size: 13px; border: 1px solid var(--axis); border-radius: 8px;
     padding: 5px 8px; width: 76px; text-align: right; }
+  .ic { width: 15px; height: 15px; flex: none; vertical-align: -2px; }
+  .lbl .ic, .sp .ic { margin-right: 4px; opacity: .85; }
+  .tile .lbl { display: flex; align-items: center; gap: 5px; }
+  .sess .sp { display: flex; align-items: center; gap: 4px; }
 </style>
 <nav>
   <div class="logo">
@@ -543,7 +548,15 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
 <!-- ============================ HEALTH ============================ -->
 <div class="page" id="page-health">
   <h1>Health — heart &amp; recovery</h1>
-  <div class="sub">Apple Health vitals across the years. Resting heart rate falling while training rises = aerobic engine growing.</div>
+  <div class="sub">Apple Health vitals across the years. Bands show your good / watch / risk zones — aim to keep the line in the green.</div>
+  <div class="controls" style="margin-bottom:14px">
+    <div class="ctrl"><label>Range</label><div class="chips" id="h-range">
+      <span class="chip" data-r="12">1 year</span>
+      <span class="chip" data-r="36">3 years</span>
+      <span class="chip on" data-r="999">All</span>
+    </div></div>
+    <span class="note" style="margin:0;align-self:flex-end">Zones: <span style="color:var(--good)">● good</span> · <span style="color:var(--warn)">▲ watch</span> · <span style="color:var(--crit)">■ risk</span> — details in the <a href="#guide">Guide</a></span>
+  </div>
   <div class="tiles" id="h-tiles"></div>
   <div class="row">
     <div class="card">
@@ -575,14 +588,14 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
   </div>
   <div class="row">
     <div class="card">
-      <h2>VO₂max estimate</h2>
-      <div class="note">Apple Watch estimate from outdoor runs/walks.</div>
-      <div id="h-vo2"></div>
+      <h2>Sleep — hours per night</h2>
+      <div class="note">Monthly average with your zones: <span style="color:var(--good)">● ≥7h good</span> · <span style="color:var(--warn)">▲ 6–7h watch</span> · <span style="color:var(--crit)">■ &lt;6h risk</span>. Build weeks need the green band.</div>
+      <div id="h-sleep"></div>
     </div>
     <div class="card">
-      <h2>Sleep &amp; weight</h2>
-      <div class="note">Monthly average sleep hours and body weight (lb).</div>
-      <div id="h-sleep" class="row" style="gap:8px"></div>
+      <h2>VO₂max estimate</h2>
+      <div class="note">Apple Watch estimate from outdoor runs/walks. 40+ = "excellent" for 40s age group.</div>
+      <div id="h-vo2"></div>
     </div>
   </div>
 </div>
@@ -705,6 +718,33 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 const NS = 'http://www.w3.org/2000/svg';
 const el = (t, a) => { const e = document.createElementNS(NS, t);
   for (const k in a) e.setAttribute(k, a[k]); return e; };
+// Inline icon set (Lucide-style, MIT) — CSP-safe, consistent 24px stroke grid
+const ICONS = {
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/>',
+  trend: '<path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/>',
+  flame: '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.3 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>',
+  battery: '<rect x="2" y="7" width="16" height="10" rx="2"/><path d="M22 11v2M6 11v2M10 11v2"/>',
+  check: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/>',
+  heart: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>',
+  pulse: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.5 12h4l1.5-3 2 5 2-4 1 2h4.5" stroke-width="1.6"/>',
+  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  wind: '<path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2"/><path d="M9.6 4.6A2 2 0 1 1 11 8H2"/><path d="M12.6 19.4A2 2 0 1 0 14 16H2"/>',
+  waves: '<path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/>',
+  bike: '<circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm-3 11.5V14l-3-3 4-3 2 3h2"/>',
+  zap: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+  dumbbell: '<path d="m6.5 6.5 11 11M21 21l-1-1M3 3l1 1M18 22l4-4M2 6l4-4M3 10l7-7M14 21l7-7"/>',
+  target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/>',
+};
+const SPORT_ICON = {run: 'zap', bike: 'bike', swim: 'waves', strength: 'dumbbell',
+                    other: 'activity', brick: 'flame', rest: 'moon'};
+function icon(name, size) {
+  return `<svg class="ic" style="${size ? `width:${size}px;height:${size}px` : ''}"
+    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+}
 const tt = document.getElementById('tt');
 function showTT(html, x, y) { tt.innerHTML = html; tt.style.display = 'block';
   const w = tt.offsetWidth; tt.style.left = Math.min(x + 14, innerWidth - w - 8) + 'px';
@@ -734,6 +774,21 @@ function lineChart(mount, series, opts) {
   const x = i => pl + (n < 2 ? 0 : i * (W - pl - pr) / (n - 1));
   const y = v => pt + (H - pt - pb) * (1 - (v - lo) / (hi - lo));
   const svg = el('svg', {viewBox: `0 0 ${W} ${H}`});
+  // reference zones: good/watch/risk bands behind the data (status colors,
+  // low opacity, each with a dot+label so meaning never rides on color alone)
+  (o.zones || []).forEach(z => {
+    const zlo = Math.max(lo, z.from ?? lo), zhi = Math.min(hi, z.to ?? hi);
+    if (zhi <= zlo) return;
+    svg.append(el('rect', {x: pl, y: y(zhi), width: W - pl - pr,
+      height: y(zlo) - y(zhi), fill: css(z.color), 'fill-opacity': 0.07}));
+    if (z.label) {
+      const ty = Math.min(H - pb - 4, Math.max(pt + 9, (y(zhi) + y(zlo)) / 2 + 3));
+      const t = el('text', {x: W - pr - 4, y: ty, 'text-anchor': 'end',
+        'font-size': 10, 'font-weight': 650});
+      t.setAttribute('fill', css(z.color)); t.setAttribute('fill-opacity', 0.9);
+      t.textContent = z.label; svg.append(t);
+    }
+  });
   for (let g = 0; g < 4; g++) {
     const v = lo + (hi - lo) * g / 3, yy = y(v);
     svg.append(el('line', {x1: pl, x2: W - pr, y1: yy, y2: yy,
@@ -743,6 +798,15 @@ function lineChart(mount, series, opts) {
   }
   if (lo < 0 && hi > 0) svg.append(el('line', {x1: pl, x2: W - pr, y1: y(0), y2: y(0),
     stroke: css('--axis'), 'stroke-width': 1}));
+  if (o.area && series.length === 1) {
+    const s0 = series[0];
+    const pts2 = s0.pts.map((p, i) => p[1] == null ? null : [x(i), y(p[1])]).filter(Boolean);
+    if (pts2.length > 1) {
+      const d2 = 'M' + pts2.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('L')
+        + `L${pts2[pts2.length-1][0].toFixed(1)},${H - pb}L${pts2[0][0].toFixed(1)},${H - pb}Z`;
+      svg.append(el('path', {d: d2, fill: css(s0.color), 'fill-opacity': 0.1}));
+    }
+  }
   const labels = series[0].pts.map(p => p[0]);
   const step = Math.ceil(n / 8);
   labels.forEach((L, i) => { if (i % step === 0) {
@@ -1005,27 +1069,27 @@ const ctlT = SET.ctl_target || 65, compG = SET.compliance_goal_pct || 85;
 const tiles = [
   ['Current week', curWeek ? `W${curWeek.week}` : '—',
    curPlan ? `${curPlan.phase} phase` + (daysToRace != null ? ` · ${daysToRace}d to race` : '') : '',
-   curWeek ? ringSvg(curWeek.week / 16, '--brand', `${16 - curWeek.week}`) : ''],
+   curWeek ? ringSvg(curWeek.week / 16, '--brand', `${16 - curWeek.week}`) : '', 'calendar'],
   ['CTL · Fitness', lastLoad ? lastLoad[1].toFixed(0) : '—', `target ${ctlT} by race`,
-   lastLoad ? ringSvg(lastLoad[1] / ctlT, '--s1', Math.round(100 * lastLoad[1] / ctlT) + '%') : ''],
-  ['ATL · Fatigue', lastLoad ? lastLoad[2].toFixed(0) : '—', '7-day load', ''],
+   lastLoad ? ringSvg(lastLoad[1] / ctlT, '--s1', Math.round(100 * lastLoad[1] / ctlT) + '%') : '', 'trend'],
+  ['ATL · Fatigue', lastLoad ? lastLoad[2].toFixed(0) : '—', '7-day load', '', 'flame'],
   ['TSB · Form', lastLoad ? (lastLoad[3] > 0 ? '+' : '') + lastLoad[3].toFixed(0) : '—',
-   `race day: +${SET.tsb_race_lo ?? 5} to +${SET.tsb_race_hi ?? 15}`, ''],
+   `race day: +${SET.tsb_race_lo ?? 5} to +${SET.tsb_race_hi ?? 15}`, '', 'battery'],
   ['Week compliance', compPct !== null ? compPct + '%' : '—',
    `hours vs plan · goal ≥${compG}%`,
-   compPct !== null ? ringSvg(compPct / 100, compPct >= compG ? '--s2' : '--s3', '') : ''],
+   compPct !== null ? ringSvg(compPct / 100, compPct >= compG ? '--s2' : '--s3', '') : '', 'check'],
   ['Readiness', rdy ? `<span class="badge" style="color:var(${rdy[0]})">${D.readiness.toUpperCase()}</span>` : '—',
-   'from RHR/HRV/sleep/TSB', rdy ? ringSvg(1, rdy[0], rdy[1]) : ''],
+   'from RHR/HRV/sleep/TSB', rdy ? ringSvg(1, rdy[0], rdy[1]) : '', 'heart'],
 ];
 document.getElementById('tiles').innerHTML = tiles.map(t =>
-  `<div class="tile"><div><div class="lbl">${t[0]}</div><div class="val">${t[1]}</div>
+  `<div class="tile"><div><div class="lbl">${icon(t[4])} ${t[0]}</div><div class="val">${t[1]}</div>
    <div class="hint">${t[2]}</div></div>${t[3]}</div>`).join('');
 
 // latest sessions + plan progress
 const last4 = [...D.acts].slice(-4).reverse();
 document.getElementById('sesscards').innerHTML = last4.map(a => `
   <div class="sess">
-    <div class="sp" style="color:var(${SPORT_COLOR[a[1]] || '--s6'})">${a[1]}</div>
+    <div class="sp" style="color:var(${SPORT_COLOR[a[1]] || '--s6'})">${icon(SPORT_ICON[a[1]] || 'activity')} ${a[1]}</div>
     <div class="big">${a[2] ? a[2].toFixed(1) + ' mi' : Math.round(a[3] * 60) + ' min'}</div>
     <div class="meta">${a[0]} · ${a[3] ? a[3].toFixed(1) + ' h' : ''}${a[4] ? ' · ' + a[4] + ' bpm' : ''}</div>
   </div>`).join('') || '<div class="note">No sessions yet.</div>';
@@ -1360,72 +1424,122 @@ async function initPlan() {
 initPlan();
 
 // ---- health page ----
-(function renderHealth() {
-  const VM = D.vm;   // [month, rhr_avg, rhr_min, rhr_max, hrv, sleep, weight_lb, vo2]
+const pctl = (vals, p) => { const a = [...vals].sort((x, y) => x - y);
+  return a.length ? a[Math.min(a.length - 1, Math.floor(a.length * p))] : null; };
+const STATUS = {good: ['●', '--good', 'GOOD'], watch: ['▲', '--warn', 'WATCH'],
+                risk: ['■', '--crit', 'RISK']};
+const badge = k => { const s = STATUS[k];
+  return `<span class="badge" style="font-size:12px;color:var(${s[1]})">${s[0]} ${s[2]}</span>`; };
+
+function renderHealth(months) {
+  const cut = new Date(new Date(D.generated).getTime() - months * 30.44 * 864e5)
+    .toISOString().slice(0, 10);
+  const VM = D.vm.filter(r => r[0] >= cut);
+  const WHR = D.whr.filter(r => r[0] >= cut);
   const ht = document.getElementById('h-tiles');
   if (!VM.length) {
     ht.innerHTML = '<div class="demo-banner">No Apple Health data yet — import on the Admin page.</div>';
     return;
   }
-  const V = D.vitals;                       // daily [date, rhr, hrv, sleep, weight]
+  // personal zones from your own distribution (all-time, stable across ranges)
+  const rhrAll = D.vm.map(r => r[1]).filter(Boolean);
+  const hrvAll = D.vm.map(r => r[4]).filter(Boolean);
+  const rhrZ = {good: pctl(rhrAll, .4), watch: pctl(rhrAll, .8)};
+  const hrvZ = {risk: pctl(hrvAll, .25), good: pctl(hrvAll, .6)};
+  const stRhr = v => v == null ? null : v <= rhrZ.good ? 'good' : v <= rhrZ.watch ? 'watch' : 'risk';
+  const stHrv = v => v == null ? null : v >= hrvZ.good ? 'good' : v >= hrvZ.risk ? 'watch' : 'risk';
+  const stSlp = v => v == null ? null : v >= 7 ? 'good' : v >= 6 ? 'watch' : 'risk';
+  const stVo2 = v => v == null ? null : v >= 42 ? 'good' : v >= 35 ? 'watch' : 'risk';
+
+  const V = D.vitals;
   const last7 = V.slice(-7);
   const avg = (arr, i) => { const v = arr.map(r => r[i]).filter(x => x != null);
     return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
   const rhr7 = avg(last7, 1), hrv7 = avg(last7, 2), slp7 = avg(last7, 3);
-  const yearAgo = VM.filter(r => r[0].slice(0, 4) === '' + (+D.generated.slice(0, 4) - 1));
+  const yearAgo = D.vm.filter(r => r[0].slice(0, 4) === '' + (+D.generated.slice(0, 4) - 1));
   const rhrYA = yearAgo.length ? yearAgo.reduce((s, r) => s + (r[1] || 0), 0) / yearAgo.length : null;
-  const vo2 = [...VM].reverse().find(r => r[7] != null);
+  const vo2 = [...D.vm].reverse().find(r => r[7] != null);
   const delta = rhr7 && rhrYA ? (rhr7 - rhrYA).toFixed(0) : null;
   ht.innerHTML = [
     ['Resting HR · 7d', rhr7 ? rhr7.toFixed(0) : '—',
-     delta != null ? `${delta > 0 ? '+' : ''}${delta} bpm vs last year` : 'bpm'],
-    ['HRV · 7d', hrv7 ? hrv7.toFixed(0) : '—', 'ms SDNN'],
-    ['Sleep · 7d', slp7 ? slp7.toFixed(1) : '—', 'hours/night'],
-    ['VO₂max', vo2 ? vo2[7].toFixed(1) : '—', vo2 ? `Apple est. · ${vo2[0].slice(0, 7)}` : ''],
-  ].map(t => `<div class="tile"><div><div class="lbl">${t[0]}</div>
-    <div class="val">${t[1]}</div><div class="hint">${t[2]}</div></div></div>`).join('');
+     delta != null ? `${delta > 0 ? '+' : ''}${delta} bpm vs last year` : 'bpm',
+     stRhr(rhr7), 'pulse'],
+    ['HRV · 7d', hrv7 ? hrv7.toFixed(0) : '—', 'ms SDNN · vs your range',
+     stHrv(hrv7), 'activity'],
+    ['Sleep · 7d', slp7 ? slp7.toFixed(1) : '—', 'hours/night · goal ≥7',
+     stSlp(slp7), 'moon'],
+    ['VO₂max', vo2 ? vo2[7].toFixed(1) : '—',
+     vo2 ? `Apple est. · ${vo2[0].slice(0, 7)}` : '', stVo2(vo2 && vo2[7]), 'wind'],
+  ].map(t => `<div class="tile"><div><div class="lbl">${icon(t[4])} ${t[0]}</div>
+    <div class="val">${t[1]}</div><div class="hint">${t[2]}</div></div>
+    ${t[3] ? `<div>${badge(t[3])}</div>` : ''}</div>`).join('');
 
-  const rhrMount = document.getElementById('h-rhr');
-  lineChart(rhrMount, [{name: 'RHR', color: '--s1',
-    pts: VM.map(r => [r[0], r[1]])}], {h: 210, fmt: v => v.toFixed(0),
-    xfmt: d => d.slice(0, 7)});
-  // year-over-year overlay
+  const xf = d => d.slice(0, 7);
+  document.getElementById('h-rhr').innerHTML = '';
+  lineChart(document.getElementById('h-rhr'), [{name: 'RHR', color: '--s1',
+    pts: VM.map(r => [r[0], r[1]])}], {h: 210, fmt: v => v.toFixed(0), xfmt: xf,
+    area: true, zones: [
+      {to: rhrZ.good, color: '--good', label: '● low'},
+      {from: rhrZ.good, to: rhrZ.watch, color: '--warn', label: '▲ typical'},
+      {from: rhrZ.watch, color: '--crit', label: '■ elevated'}]});
+
   const years = [...new Set(VM.map(r => r[0].slice(0, 4)))].slice(-5);
   const YO = ['--s1', '--s2', '--s3', '--s5', '--s6'];
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('h-rhr-yoy').innerHTML = '';
   lineChart(document.getElementById('h-rhr-yoy'),
     years.map((y, i) => ({name: y, color: YO[i], pts: MONTHS.map((mo, mi2) => {
       const row = VM.find(r => r[0].slice(0, 4) === y && +r[0].slice(5, 7) === mi2 + 1);
       return [mo, row ? row[1] : null];
     })})), {h: 210, fmt: v => v.toFixed(0)});
 
-  const whrDates = [...new Set(D.whr.map(r => r[0]))].sort();
+  const whrDates = [...new Set(WHR.map(r => r[0]))].sort();
+  document.getElementById('h-whr').innerHTML = '';
   if (whrDates.length) {
     const mk = sp => whrDates.map(d => {
-      const row = D.whr.find(r => r[0] === d && r[1] === sp);
+      const row = WHR.find(r => r[0] === d && r[1] === sp);
       return [d, row ? row[2] : null];
     });
     lineChart(document.getElementById('h-whr'), [
       {name: 'Run', color: '--s1', pts: mk('run')},
       {name: 'Bike', color: '--s2', pts: mk('bike')},
-    ], {h: 210, fmt: v => v.toFixed(0), xfmt: d => d.slice(0, 7)});
+    ], {h: 210, fmt: v => v.toFixed(0), xfmt: xf});
   }
   const hrvPts = VM.filter(r => r[4] != null).map(r => [r[0], r[4]]);
+  document.getElementById('h-hrv').innerHTML = '';
   if (hrvPts.length) lineChart(document.getElementById('h-hrv'),
     [{name: 'HRV', color: '--s2', pts: hrvPts}],
-    {h: 210, fmt: v => v.toFixed(0), xfmt: d => d.slice(0, 7)});
-  else document.getElementById('h-hrv').innerHTML = '<div class="note">No HRV data.</div>';
+    {h: 210, fmt: v => v.toFixed(0), xfmt: xf, area: true, zones: [
+      {from: hrvZ.good, color: '--good', label: '● strong'},
+      {from: hrvZ.risk, to: hrvZ.good, color: '--warn', label: '▲ typical'},
+      {to: hrvZ.risk, color: '--crit', label: '■ suppressed'}]});
+  else document.getElementById('h-hrv').innerHTML = '<div class="note">No HRV data in range.</div>';
+
+  const slpPts = VM.filter(r => r[5] != null).map(r => [r[0], r[5]]);
+  document.getElementById('h-sleep').innerHTML = '';
+  if (slpPts.length) lineChart(document.getElementById('h-sleep'),
+    [{name: 'Sleep', color: '--s1', pts: slpPts}],
+    {h: 210, fmt: v => v.toFixed(1), xfmt: xf, area: true, zones: [
+      {from: 7, color: '--good', label: '● ≥7h'},
+      {from: 6, to: 7, color: '--warn', label: '▲ 6–7h'},
+      {to: 6, color: '--crit', label: '■ <6h'}]});
+
   const vo2Pts = VM.filter(r => r[7] != null).map(r => [r[0], r[7]]);
+  document.getElementById('h-vo2').innerHTML = '';
   if (vo2Pts.length) lineChart(document.getElementById('h-vo2'),
     [{name: 'VO2max', color: '--s5', pts: vo2Pts}],
-    {h: 210, fmt: v => v.toFixed(1), xfmt: d => d.slice(0, 7)});
-  else document.getElementById('h-vo2').innerHTML = '<div class="note">No VO₂max data.</div>';
-  const sw = document.getElementById('h-sleep');
-  miniLine(sw, 'Sleep (h/night)', VM.filter(r => r[5] != null).map(r => [r[0], r[5]]),
-    '--s1', v => v.toFixed(1));
-  const wPts = VM.filter(r => r[6] != null).map(r => [r[0], r[6]]);
-  if (wPts.length) miniLine(sw, 'Weight (lb)', wPts, '--s2', v => v.toFixed(0));
-})();
+    {h: 210, fmt: v => v.toFixed(1), xfmt: xf, area: true, zones: [
+      {from: 42, color: '--good', label: '● 42+'},
+      {from: 35, to: 42, color: '--warn', label: '▲ 35–42'},
+      {to: 35, color: '--crit', label: '■ <35'}]});
+  else document.getElementById('h-vo2').innerHTML = '<div class="note">No VO₂max data in range.</div>';
+}
+renderHealth(999);
+document.querySelectorAll('#h-range .chip').forEach(c => c.onclick = () => {
+  document.querySelectorAll('#h-range .chip').forEach(x => x.classList.remove('on'));
+  c.classList.add('on');
+  renderHealth(+c.dataset.r);
+});
 
 // ---- kickoff (plan page) ----
 async function initKickoff() {
