@@ -1,0 +1,41 @@
+===== 2026-07-19 20:07:45 daily sync start =====
+--- strava sync
+/Users/santosh/ironman-703/.venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+Upserted 4 Strava activities (last 7 days)
+--- compute metrics
+daily_load rebuilt 2017-06-04 -> 2026-07-19. Today: CTL 6, ATL 7, TSB -1
+--- rebuild dashboard
+Wrote /Users/santosh/ironman-703/dashboard/dashboard.html (live: 1967 activities, 34 effort rows)
+--- databricks replicate
+Ensuring workspace.ironman + volume...
+  v_activities_export    -> workspace.ironman.activities           1967 rows
+  daily_load             -> workspace.ironman.daily_load           3333 rows
+  daily_vitals           -> workspace.ironman.daily_vitals         0 rows
+  weekly_plan            -> workspace.ironman.weekly_plan          16 rows
+  v_weekly_compliance    -> workspace.ironman.weekly_compliance    16 rows
+  v_monthly_volume       -> workspace.ironman.monthly_volume       230 rows
+  v_yearly_summary       -> workspace.ironman.yearly_summary       34 rows
+  v_dow_hour             -> workspace.ironman.dow_hour             258 rows
+  v_run_distance_dist    -> workspace.ironman.run_distance_dist    16 rows
+  v_best_efforts         -> workspace.ironman.best_efforts         34 rows
+  v_records              -> workspace.ironman.records              5 rows
+  v_run_load_ratio       -> workspace.ironman.run_load_ratio       3333 rows
+  v_efficiency           -> workspace.ironman.efficiency           1055 rows
+
+Audit — files uploaded to Databricks:
+  activities.csv (1967 rows)
+  daily_load.csv (3333 rows)
+  daily_vitals.csv (0 rows)
+  weekly_plan.csv (16 rows)
+  weekly_compliance.csv (16 rows)
+  monthly_volume.csv (230 rows)
+  yearly_summary.csv (34 rows)
+  dow_hour.csv (258 rows)
+  run_distance_dist.csv (16 rows)
+  best_efforts.csv (34 rows)
+  records.csv (5 rows)
+  run_load_ratio.csv (3333 rows)
+  efficiency.csv (1055 rows)
+Nothing outside ironman schema was read.
+===== 2026-07-19 20:09:51 done (fail=0) =====

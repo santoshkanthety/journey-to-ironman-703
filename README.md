@@ -203,6 +203,24 @@ Lakeview pages: **Overview** (PMC, compliance, records) · **Activities**
 (monthly volumes, day×hour training heatmap, yearly distances) · **Runner
 Profile** (best efforts 5k→marathon, pace progression by year, ACWR injury guard).
 
+## Automation
+
+`etl/daily_sync.sh` runs the whole pipeline (Strava → metrics → dashboard →
+Databricks) and is safe to re-run any time: every load is an upsert keyed on
+`(source, external_id)`, so duplicates are impossible. Schedule on macOS with
+a launchd LaunchAgent (daily 06:30; a missed run fires at next wake):
+
+```xml
+<!-- ~/Library/LaunchAgents/com.tripeak.dailysync.plist -->
+<key>ProgramArguments</key>
+<array><string>/bin/zsh</string><string>/path/to/ironman-703/etl/daily_sync.sh</string></array>
+<key>StartCalendarInterval</key>
+<dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+```
+
+To run even if the machine is asleep, add a scheduled wake just before:
+`sudo pmset repeat wakeorpoweron MTWRFSU 06:28:00`.
+
 ## Privacy by design
 
 - **No credentials in this repo.** Everything sensitive lives in environment

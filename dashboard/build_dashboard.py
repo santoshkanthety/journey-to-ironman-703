@@ -65,10 +65,11 @@ def fetch(con):
              AND date >= CURRENT_DATE - 182 ORDER BY date""").fetchall()]
     ready = con.execute(
         "SELECT readiness FROM v_readiness ORDER BY date DESC LIMIT 1").fetchone()
-    acts = [[str(r[0]), r[1], _num(r[2]), _num(r[3]), _num(r[4])]
+    acts = [[str(r[0]), r[1], _num(r[2]), _num(r[3]), _num(r[4]), _num(r[5]), _num(r[6])]
             for r in con.execute("""
         SELECT start_time::date, sport, ROUND(distance_m/1609.344, 2),
-               ROUND(duration_s/3600.0, 2), avg_hr
+               ROUND(duration_s/3600.0, 2), avg_hr,
+               EXTRACT(HOUR FROM start_time)::int, ROUND(COALESCE(tss, 0), 0)
         FROM activities WHERE duration_s > 0 ORDER BY start_time""").fetchall()]
     efforts = rows(con, """
         SELECT band, meters, year, date::text, est_time, pace_min_mi,
@@ -124,7 +125,8 @@ def demo_data(plan):
                   "swim": abs(rng.gauss(0.9, .35))}[sp]
             hrs = mi / {"run": 6, "bike": 15.5, "swim": 2}[sp]
             acts.append([f"{y}-{rng.randint(1,12):02d}-{rng.randint(1,28):02d}",
-                         sp, round(mi, 2), round(hrs, 2), round(rng.gauss(140, 12))])
+                         sp, round(mi, 2), round(hrs, 2), round(rng.gauss(140, 12)),
+                         rng.choice([6, 7, 8, 12, 17, 18]), round(hrs * 55)])
     efforts = [{"band": b, "meters": m, "year": 2026, "date": "2026-05-01",
                 "time": t, "pace": p, "mi": round(m/1609.344, 1), "pr": True}
                for b, m, t, p in [("5k", 5000, "00:23:10", "07:28"),
@@ -171,30 +173,31 @@ def main():
 TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
 <style>
   :root {
-    --surface-1:#fcfcfb; --page:#f6f6f3; --ink:#0b0b0b; --ink-2:#52514e;
-    --muted:#898781; --grid:#e1e0d9; --axis:#c3c2b7;
-    --border:rgba(11,11,11,0.10);
+    --surface-1:#ffffff; --page:#f2f4fa; --ink:#111527; --ink-2:#4c5570;
+    --muted:#7d86a3; --grid:#e5e8f2; --axis:#c7cee0;
+    --border:rgba(30,50,120,0.10);
     --s1:#2a78d6; --s2:#1baf7a; --s3:#eda100; --s5:#4a3aa7; --s6:#e34948;
     --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
-    --plan-ghost:#e1e0d9; --brand:#2a78d6; --nav:#fcfcfb;
+    --plan-ghost:#e5e8f2; --brand:#0d7ec2; --nav:#ffffff;
   }
   @media (prefers-color-scheme: dark) { :root {
-    --surface-1:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink-2:#c3c2b7;
-    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+    --surface-1:#151a33; --page:#0b0f22; --ink:#f2f5ff; --ink-2:#aab3d6;
+    --grid:#252c4e; --axis:#333b63; --border:rgba(140,160,255,0.14);
     --s1:#3987e5; --s2:#199e70; --s3:#c98500; --s5:#9085e9; --s6:#e66767;
-    --plan-ghost:#2c2c2a; --brand:#3987e5; --nav:#161615;
+    --plan-ghost:#252c4e; --brand:#38bdf8; --nav:#10142a;
   }}
   :root[data-theme="dark"] {
-    --surface-1:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink-2:#c3c2b7;
-    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+    --surface-1:#151a33; --page:#0b0f22; --ink:#f2f5ff; --ink-2:#aab3d6;
+    --grid:#252c4e; --axis:#333b63; --border:rgba(140,160,255,0.14);
     --s1:#3987e5; --s2:#199e70; --s3:#c98500; --s5:#9085e9; --s6:#e66767;
-    --plan-ghost:#2c2c2a; --brand:#3987e5; --nav:#161615;
+    --plan-ghost:#252c4e; --brand:#38bdf8; --nav:#10142a;
   }
   :root[data-theme="light"] {
-    --surface-1:#fcfcfb; --page:#f6f6f3; --ink:#0b0b0b; --ink-2:#52514e;
-    --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.10);
+    --surface-1:#ffffff; --page:#f2f4fa; --ink:#111527; --ink-2:#4c5570;
+    --muted:#7d86a3; --grid:#e5e8f2; --axis:#c7cee0;
+    --border:rgba(30,50,120,0.10);
     --s1:#2a78d6; --s2:#1baf7a; --s3:#eda100; --s5:#4a3aa7; --s6:#e34948;
-    --plan-ghost:#e1e0d9; --brand:#2a78d6; --nav:#fcfcfb;
+    --plan-ghost:#e5e8f2; --brand:#0d7ec2; --nav:#ffffff;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -220,13 +223,32 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
   .tiles { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr));
     gap: 12px; margin-bottom: 18px; }
   .tile { background: var(--surface-1); border: 1px solid var(--border);
-    border-radius: 12px; padding: 14px 16px; }
-  .tile .lbl { font-size: 12px; color: var(--ink-2); margin-bottom: 4px; }
-  .tile .val { font-size: 26px; font-weight: 680; }
+    border-radius: 14px; padding: 14px 16px; display: flex; gap: 10px;
+    align-items: center; justify-content: space-between; }
+  .tile .lbl { font-size: 10.5px; color: var(--ink-2); margin-bottom: 4px;
+    text-transform: uppercase; letter-spacing: .7px; font-weight: 650; }
+  .tile .val { font-size: 25px; font-weight: 700; }
   .tile .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .ring { flex: none; }
+  .ring text { font-size: 13px; font-weight: 700; fill: var(--ink); }
+  .planbar { height: 8px; border-radius: 99px; background: var(--plan-ghost);
+    overflow: hidden; margin-top: 8px; }
+  .planbar i { display: block; height: 100%; border-radius: 99px;
+    background: linear-gradient(90deg, var(--brand), var(--s5)); }
+  .sesscards { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr));
+    gap: 12px; }
+  .sess { background: var(--page); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px; }
+  .sess .sp { font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .6px; }
+  .sess .big { font-size: 19px; font-weight: 700; margin: 4px 0 2px; }
+  .sess .meta { font-size: 11.5px; color: var(--muted); }
   .card { background: var(--surface-1); border: 1px solid var(--border);
-    border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
-  .card h2 { font-size: 14px; margin: 0 0 2px; }
+    border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; }
+  .card h2 { font-size: 11.5px; margin: 0 0 3px; text-transform: uppercase;
+    letter-spacing: .8px; color: var(--brand); font-weight: 700; }
+  .card h2::after { content: ""; display: block; width: 34px; height: 2px;
+    background: var(--brand); border-radius: 2px; margin-top: 4px; opacity: .8; }
   .card .note { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
   .legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2);
     margin-bottom: 6px; flex-wrap: wrap; }
@@ -267,6 +289,12 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
   select { background: var(--surface-1); color: var(--ink); font: inherit;
     font-size: 13px; border: 1px solid var(--axis); border-radius: 8px;
     padding: 6px 10px; }
+  select:focus-visible, .chip:focus-visible, .tabs a:focus-visible {
+    outline: 2px solid var(--brand); outline-offset: 1px; }
+  select:hover { border-color: var(--brand); }
+  .phase { color: var(--brand);
+    background: color-mix(in srgb, var(--brand) 8%, transparent); }
+  a { color: var(--brand); }
   .chips { display: flex; gap: 6px; }
   .chip { font-size: 12.5px; padding: 6px 12px; border-radius: 99px; cursor: pointer;
     border: 1px solid var(--axis); background: var(--surface-1); color: var(--ink-2);
@@ -319,6 +347,19 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
 <!-- ============================ DASHBOARD ============================ -->
 <div class="page on" id="page-dash">
   <div class="tiles" id="tiles"></div>
+  <div class="row" style="grid-template-columns:2fr 1fr">
+    <div class="card">
+      <h2>Latest sessions</h2>
+      <div class="sesscards" id="sesscards"></div>
+    </div>
+    <div class="card">
+      <h2>Plan progress</h2>
+      <div class="note" id="planprog-note"></div>
+      <div class="planbar"><i id="planprog" style="width:0%"></i></div>
+      <div class="hint" style="font-size:11px;color:var(--muted);margin-top:8px"
+           id="planprog-hint"></div>
+    </div>
+  </div>
   <div class="card">
     <h2>Performance Management — CTL / ATL / TSB</h2>
     <div class="note">Fitness (42-day load), Fatigue (7-day load), Form = Fitness − Fatigue. Race-day target: TSB +5 to +15. <a href="#guide" style="color:var(--brand)">How to read →</a></div>
@@ -369,31 +410,51 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
 <!-- ============================ STATISTICS ============================ -->
 <div class="page" id="page-stats">
   <h1>Statistics — slice &amp; dice</h1>
-  <div class="sub">Distribution of your training across any cut. Box = middle 50% of sessions, line = median, whiskers = typical range, dots = outliers.</div>
-  <div class="card">
-    <div class="controls">
+  <div class="sub">One filter bar drives every chart and the summary below.</div>
+  <div class="card" style="position:sticky;top:64px;z-index:4">
+    <div class="controls" style="margin-bottom:0">
       <div class="ctrl"><label>Metric</label>
         <select id="st-metric">
           <option value="mi">Distance (mi)</option>
           <option value="hours">Duration (hours)</option>
-          <option value="hr">Avg heart rate (bpm)</option>
+          <option value="n">Sessions</option>
+          <option value="tss">Training stress (TSS)</option>
         </select></div>
-      <div class="ctrl"><label>Group by</label>
-        <select id="st-group">
-          <option value="sport">Sport</option>
+      <div class="ctrl"><label>Grain</label>
+        <select id="st-grain">
+          <option value="month">Month</option>
           <option value="year">Year</option>
-          <option value="sport_year">Year (one sport)</option>
         </select></div>
-      <div class="ctrl" id="st-sportsel-wrap" style="display:none"><label>Sport</label>
-        <select id="st-sportsel"></select></div>
       <div class="ctrl"><label>From</label><select id="st-y0"></select></div>
       <div class="ctrl"><label>To</label><select id="st-y1"></select></div>
       <div class="ctrl"><label>Sports</label><div class="chips" id="st-chips"></div></div>
     </div>
-    <div id="boxplot"></div>
   </div>
   <div class="card">
-    <h2>Group summary</h2>
+    <h2>Volume over time</h2>
+    <div class="note">Stacked by sport at the selected grain. Hover any bar for the split.</div>
+    <div class="legend" id="st-vol-legend"></div>
+    <div id="st-volume"></div>
+  </div>
+  <div class="row">
+    <div class="card">
+      <h2>Year-over-year cumulative</h2>
+      <div class="note">Running total through the year — are you ahead of last year? (5 most recent years in range)</div>
+      <div id="st-yoy"></div>
+    </div>
+    <div class="card">
+      <h2>Session size distribution</h2>
+      <div class="note">How big your sessions are, bucketed. Filters apply.</div>
+      <div id="st-hist"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>When you train</h2>
+    <div class="note">Sessions by day of week × start hour. Darker = more sessions.</div>
+    <div id="st-heat"></div>
+  </div>
+  <div class="card">
+    <h2>Summary by sport</h2>
     <div class="note">Same slice as above.</div>
     <div class="tablewrap"><table id="st-table"></table></div>
   </div>
@@ -444,8 +505,8 @@ TEMPLATE = r"""<title>TriPeak — Training Intelligence</title>
     <p>Blue CTL climbing steadily = plan working. Green ATL spikes with hard weeks — normal. Yellow TSB is the one to watch: it should live between −10 and −25 during build blocks, pop positive on recovery weeks, and be brought to +5..+15 by the taper for race day.</p>
     <h3>Plan vs actual bars</h3>
     <p>Gray bar is the plan, colored bar is what you did. Bars matching ≥ 85% week after week is exactly how you finish a 70.3 — consistency beats heroics. One low week is noise; two in a row is a trend that needs a plan adjustment.</p>
-    <h3>Boxplots (Statistics)</h3>
-    <p>Each box shows the middle 50% of your sessions for that group — the line inside is the median, whiskers reach to the typical extremes, and dots are outliers (epic days or cut-short sessions). Use the group-by and filters to compare sports, watch a year-over-year distance shift, or check whether long rides are actually getting longer through the build.</p>
+    <h3>Statistics page</h3>
+    <p>The filter bar at the top drives everything: pick the metric (miles, hours, sessions, TSS), the grain (month/year), a year range, and toggle sports on or off. The stacked bars show where volume came from; the year-over-year lines show cumulative totals so you can see instantly whether you're ahead of last year; the histogram shows how big your typical session is; and the day × hour grid shows when you actually train.</p>
     <h3>Efficiency factor</h3>
     <p>Only steady sessions ≥ 40 min count. The absolute number matters less than the drift: a rising line at the same heart rate is aerobic fitness you can bank for race day.</p>
 
@@ -601,69 +662,131 @@ function miniLine(mount, title, pts, color, fmt) {
   mount.append(wrap);
 }
 
-// ---- boxplot ----
-function quartiles(v) {
+// ---- stats renderers ----
+function median(v) {
   const a = [...v].sort((x, y) => x - y), n = a.length;
-  const q = p => { const i = (n - 1) * p, f = Math.floor(i);
-    return a[f] + (a[Math.min(f + 1, n - 1)] - a[f]) * (i - f); };
-  const q1 = q(.25), med = q(.5), q3 = q(.75), iqr = q3 - q1;
-  const loF = q1 - 1.5 * iqr, hiF = q3 + 1.5 * iqr;
-  const inliers = a.filter(x => x >= loF && x <= hiF);
-  return {n, min: a[0], max: a[n-1], q1, med, q3,
-          wlo: inliers[0], whi: inliers[inliers.length - 1],
-          out: a.filter(x => x < loF || x > hiF),
-          mean: a.reduce((s, x) => s + x, 0) / n};
+  return n ? (n % 2 ? a[(n-1)/2] : (a[n/2-1] + a[n/2]) / 2) : 0;
 }
 
-function boxplot(mount, groups, opts) {
-  // groups: [{label, color(css var), stats}]
+function stackedBars(mount, periods, opts) {
+  // periods: [{label, segs: [{name, color, val}]}]
   mount.innerHTML = '';
-  if (!groups.length) { mount.innerHTML = '<div class="note">No sessions in this slice.</div>'; return; }
-  const o = Object.assign({fmt: v => v.toFixed(1), unit: ''}, opts);
-  const W = 900, rowH = 46, pt = 8, pb = 30, pl = 120, pr = 30;
-  const H = pt + pb + groups.length * rowH;
-  let lo = Math.min(...groups.map(g => Math.min(g.stats.wlo, ...(g.stats.out.length ? [g.stats.min] : []))));
-  let hi = Math.max(...groups.map(g => Math.max(g.stats.whi, ...(g.stats.out.length ? [g.stats.max] : []))));
-  if (lo === hi) { lo -= 1; hi += 1; }
-  const span = hi - lo; lo = Math.max(0, lo - span * .03); hi += span * .03;
-  const x = v => pl + (W - pl - pr) * (v - lo) / (hi - lo);
+  if (!periods.length) { mount.innerHTML = '<div class="note">No sessions in this slice.</div>'; return; }
+  const o = Object.assign({h: 240, fmt: v => v.toFixed(0), unit: ''}, opts);
+  const W = 900, H = o.h, pt = 10, pb = 26, pl = 46, pr = 10;
+  const hi = Math.max(...periods.map(p => p.segs.reduce((s, g) => s + g.val, 0))) * 1.06 || 1;
+  const y = v => pt + (H - pt - pb) * (1 - v / hi);
   const svg = el('svg', {viewBox: `0 0 ${W} ${H}`});
-  for (let g = 0; g <= 4; g++) {
-    const v = lo + (hi - lo) * g / 4, xx = x(v);
-    svg.append(el('line', {x1: xx, x2: xx, y1: pt, y2: H - pb, stroke: css('--grid')}));
-    const t = el('text', {x: xx, y: H - 10, 'text-anchor': 'middle'});
+  for (let g = 0; g < 4; g++) {
+    const v = hi * g / 3, yy = y(v);
+    svg.append(el('line', {x1: pl, x2: W - pr, y1: yy, y2: yy, stroke: css('--grid')}));
+    const t = el('text', {x: pl - 6, y: yy + 3.5, 'text-anchor': 'end'});
     t.textContent = o.fmt(v); svg.append(t);
   }
-  groups.forEach((g, i) => {
-    const cy = pt + i * rowH + rowH / 2, s = g.stats, col = css(g.color);
-    const lab = el('text', {x: pl - 10, y: cy + 4, 'text-anchor': 'end', class: 'dl'});
-    lab.setAttribute('fill', css('--ink-2')); lab.textContent = g.label; svg.append(lab);
-    svg.append(el('line', {x1: x(s.wlo), x2: x(s.q1), y1: cy, y2: cy,
-      stroke: col, 'stroke-width': 2}));
-    svg.append(el('line', {x1: x(s.q3), x2: x(s.whi), y1: cy, y2: cy,
-      stroke: col, 'stroke-width': 2}));
-    [s.wlo, s.whi].forEach(v => svg.append(el('line', {x1: x(v), x2: x(v),
-      y1: cy - 7, y2: cy + 7, stroke: col, 'stroke-width': 2})));
-    svg.append(el('rect', {x: x(s.q1), y: cy - 11, width: Math.max(2, x(s.q3) - x(s.q1)),
-      height: 22, rx: 4, fill: col, 'fill-opacity': .35, stroke: col, 'stroke-width': 1.5}));
-    svg.append(el('line', {x1: x(s.med), x2: x(s.med), y1: cy - 11, y2: cy + 11,
-      stroke: col, 'stroke-width': 2.5}));
-    s.out.slice(0, 60).forEach(v => svg.append(el('circle',
-      {cx: x(v), cy, r: 2.5, fill: col, 'fill-opacity': .55})));
-    const zone = el('rect', {x: pl, y: cy - rowH/2, width: W - pl - pr, height: rowH,
+  const bw = (W - pl - pr) / periods.length;
+  const bar = Math.min(26, bw * .62);
+  const lstep = Math.ceil(periods.length / 12);
+  periods.forEach((p, i) => {
+    const cx = pl + bw * i + bw / 2;
+    if (i % lstep === 0) {
+      const t = el('text', {x: cx, y: H - 6, 'text-anchor': 'middle'});
+      t.textContent = p.label; svg.append(t);
+    }
+    let acc = 0;
+    p.segs.forEach((s, si) => {
+      if (!s.val) return;
+      const y1 = y(acc + s.val), y2 = y(acc);
+      const top = si === p.segs.filter(g => g.val).length - 1;
+      svg.append(el('rect', {x: cx - bar/2, y: y1, width: bar,
+        height: Math.max(1, y2 - y1 - 2),          // 2px surface gap between segments
+        rx: top ? 3 : 0, fill: css(s.color)}));
+      acc += s.val;
+    });
+    const zone = el('rect', {x: pl + bw*i, y: pt, width: bw, height: H - pt - pb,
+      fill: 'transparent'});
+    zone.addEventListener('mousemove', e => {
+      const tot = p.segs.reduce((s, g) => s + g.val, 0);
+      showTT(`<b>${p.label}</b>` +
+        p.segs.filter(g => g.val).map(g =>
+          `<div class="r"><span>${g.name}</span><span>${o.fmt(g.val)}${o.unit}</span></div>`).join('') +
+        `<div class="r" style="border-top:1px solid var(--grid);margin-top:3px;padding-top:3px"><span>Total</span><span>${o.fmt(tot)}${o.unit}</span></div>`,
+        e.clientX, e.clientY);
+    });
+    zone.addEventListener('mouseleave', hideTT);
+    svg.append(zone);
+  });
+  mount.append(svg);
+}
+
+function barsSimple(mount, rows, opts) {
+  // rows: [{label, val}] single-series histogram/bars
+  mount.innerHTML = '';
+  if (!rows.length || !rows.some(r => r.val)) {
+    mount.innerHTML = '<div class="note">No sessions in this slice.</div>'; return; }
+  const o = Object.assign({h: 200, color: '--s1', fmt: v => v, unit: ''}, opts);
+  const W = 460, H = o.h, pt = 8, pb = 24, pl = 38, pr = 6;
+  const hi = Math.max(...rows.map(r => r.val)) * 1.08 || 1;
+  const y = v => pt + (H - pt - pb) * (1 - v / hi);
+  const svg = el('svg', {viewBox: `0 0 ${W} ${H}`});
+  for (let g = 0; g < 4; g++) {
+    const v = hi * g / 3, yy = y(v);
+    svg.append(el('line', {x1: pl, x2: W - pr, y1: yy, y2: yy, stroke: css('--grid')}));
+    const t = el('text', {x: pl - 5, y: yy + 3.5, 'text-anchor': 'end'});
+    t.textContent = Math.round(v); svg.append(t);
+  }
+  const bw = (W - pl - pr) / rows.length;
+  const bar = Math.max(3, Math.min(18, bw * .7));
+  const lstep = Math.ceil(rows.length / 10);
+  rows.forEach((r, i) => {
+    const cx = pl + bw * i + bw / 2, yy = y(r.val);
+    if (i % lstep === 0) {
+      const t = el('text', {x: cx, y: H - 6, 'text-anchor': 'middle'});
+      t.textContent = r.label; svg.append(t);
+    }
+    svg.append(el('rect', {x: cx - bar/2, y: yy, width: bar,
+      height: Math.max(0, H - pb - yy), rx: 3, fill: css(o.color)}));
+    const zone = el('rect', {x: pl + bw*i, y: pt, width: bw, height: H - pt - pb,
       fill: 'transparent'});
     zone.addEventListener('mousemove', e => showTT(
-      `<b>${g.label}</b> · ${s.n} sessions
-       <div class="r"><span>Median</span><span>${o.fmt(s.med)}${o.unit}</span></div>
-       <div class="r"><span>Middle 50%</span><span>${o.fmt(s.q1)}–${o.fmt(s.q3)}${o.unit}</span></div>
-       <div class="r"><span>Typical range</span><span>${o.fmt(s.wlo)}–${o.fmt(s.whi)}${o.unit}</span></div>
-       <div class="r"><span>Mean</span><span>${o.fmt(s.mean)}${o.unit}</span></div>
-       <div class="r"><span>Max</span><span>${o.fmt(s.max)}${o.unit}</span></div>
-       <div class="r"><span>Outliers</span><span>${s.out.length}</span></div>`,
+      `<b>${o.tip ? o.tip(r.label) : r.label}</b>
+       <div class="r"><span>Sessions</span><span>${r.val}</span></div>`,
       e.clientX, e.clientY));
     zone.addEventListener('mouseleave', hideTT);
     svg.append(zone);
   });
+  mount.append(svg);
+}
+
+function heatGrid(mount, counts) {
+  // counts[dow 0-6][hour 0-23]
+  mount.innerHTML = '';
+  const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const W = 900, cell = 30, pl = 44, pt = 22, gap = 2;
+  const cw = (W - pl - 10 - 23 * gap) / 24;
+  const H = pt + 7 * (cell + gap) + 8;
+  const hi = Math.max(1, ...counts.flat());
+  const svg = el('svg', {viewBox: `0 0 ${W} ${H}`});
+  for (let h = 0; h < 24; h += 3) {
+    const t = el('text', {x: pl + h * (cw + gap) + cw/2, y: pt - 8, 'text-anchor': 'middle'});
+    t.textContent = h; svg.append(t);
+  }
+  for (let d = 0; d < 7; d++) {
+    const t = el('text', {x: pl - 8, y: pt + d * (cell + gap) + cell/2 + 4, 'text-anchor': 'end'});
+    t.textContent = DOW[d]; svg.append(t);
+    for (let h = 0; h < 24; h++) {
+      const v = counts[d][h];
+      const r = el('rect', {x: pl + h * (cw + gap), y: pt + d * (cell + gap),
+        width: cw, height: cell, rx: 4,
+        fill: v ? css('--s1') : css('--grid'),
+        'fill-opacity': v ? (0.18 + 0.82 * v / hi).toFixed(2) : 0.5});
+      r.addEventListener('mousemove', e => showTT(
+        `<b>${DOW[d]} ${h}:00–${h+1}:00</b>
+         <div class="r"><span>Sessions</span><span>${v}</span></div>`,
+        e.clientX, e.clientY));
+      r.addEventListener('mouseleave', hideTT);
+      svg.append(r);
+    }
+  }
   mount.append(svg);
 }
 
@@ -683,23 +806,50 @@ const lastLoad = D.pmc[D.pmc.length - 1];
 const actual = D.actual;
 const curWeek = actual.length ? actual[actual.length - 1] : null;
 const curPlan = curWeek ? P[curWeek.week - 1] : P[0];
-const READY = {green: ['●', '--good', 'Train as planned'],
-  yellow: ['▲', '--warn', 'Reduce intensity'], red: ['■', '--crit', 'Recovery day']};
+const READY = {green: ['--good', 'GO'], yellow: ['--warn', 'EASY'], red: ['--crit', 'REST']};
+function ringSvg(frac, color, txt) {
+  const r = 19, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, frac));
+  return `<svg class="ring" width="48" height="48" viewBox="0 0 48 48" aria-hidden="true">
+    <circle cx="24" cy="24" r="${r}" fill="none" stroke="var(--plan-ghost)" stroke-width="5"/>
+    <circle cx="24" cy="24" r="${r}" fill="none" stroke="var(${color})" stroke-width="5"
+      stroke-linecap="round" stroke-dasharray="${(f * c).toFixed(1)} ${c.toFixed(1)}"
+      transform="rotate(-90 24 24)"/>
+    <text x="24" y="28.5" text-anchor="middle">${txt}</text></svg>`;
+}
+const compPct = curWeek && curPlan ? Math.round(100 * curWeek.hours / curPlan.hours) : null;
+const rdy = D.readiness && READY[D.readiness];
 const tiles = [
-  ['Current week', curWeek ? `W${curWeek.week}` : '—', curPlan ? `${curPlan.phase} phase` : ''],
-  ['CTL · Fitness', lastLoad ? lastLoad[1].toFixed(0) : '—', 'target 55–70 by race'],
-  ['ATL · Fatigue', lastLoad ? lastLoad[2].toFixed(0) : '—', '7-day load'],
-  ['TSB · Form', lastLoad ? (lastLoad[3] > 0 ? '+' : '') + lastLoad[3].toFixed(0) : '—', 'race day: +5 to +15'],
-  ['Week compliance', curWeek && curPlan ? Math.round(100 * curWeek.hours / curPlan.hours) + '%' : '—', 'hours vs plan · goal ≥85%'],
-  ['Readiness', null, 'from RHR/HRV/sleep/TSB'],
+  ['Current week', curWeek ? `W${curWeek.week}` : '—', curPlan ? `${curPlan.phase} phase` : '',
+   curWeek ? ringSvg(curWeek.week / 16, '--brand', `${16 - curWeek.week}`) : ''],
+  ['CTL · Fitness', lastLoad ? lastLoad[1].toFixed(0) : '—', 'target 55–70 by race',
+   lastLoad ? ringSvg(lastLoad[1] / 65, '--s1', Math.round(100 * lastLoad[1] / 65) + '%') : ''],
+  ['ATL · Fatigue', lastLoad ? lastLoad[2].toFixed(0) : '—', '7-day load', ''],
+  ['TSB · Form', lastLoad ? (lastLoad[3] > 0 ? '+' : '') + lastLoad[3].toFixed(0) : '—',
+   'race day: +5 to +15', ''],
+  ['Week compliance', compPct !== null ? compPct + '%' : '—', 'hours vs plan · goal ≥85%',
+   compPct !== null ? ringSvg(compPct / 100, compPct >= 85 ? '--s2' : '--s3', '') : ''],
+  ['Readiness', rdy ? `<span class="badge" style="color:var(${rdy[0]})">${D.readiness.toUpperCase()}</span>` : '—',
+   'from RHR/HRV/sleep/TSB', rdy ? ringSvg(1, rdy[0], rdy[1]) : ''],
 ];
-document.getElementById('tiles').innerHTML = tiles.map(t => {
-  let val = t[1] === null
-    ? (D.readiness && READY[D.readiness]
-        ? `<span class="badge" style="color:var(${READY[D.readiness][1]})">${READY[D.readiness][0]} ${D.readiness.toUpperCase()}</span>` : '—')
-    : t[1];
-  return `<div class="tile"><div class="lbl">${t[0]}</div><div class="val">${val}</div><div class="hint">${t[2]}</div></div>`;
-}).join('');
+document.getElementById('tiles').innerHTML = tiles.map(t =>
+  `<div class="tile"><div><div class="lbl">${t[0]}</div><div class="val">${t[1]}</div>
+   <div class="hint">${t[2]}</div></div>${t[3]}</div>`).join('');
+
+// latest sessions + plan progress
+const last4 = [...D.acts].slice(-4).reverse();
+document.getElementById('sesscards').innerHTML = last4.map(a => `
+  <div class="sess">
+    <div class="sp" style="color:var(${SPORT_COLOR[a[1]] || '--s6'})">${a[1]}</div>
+    <div class="big">${a[2] ? a[2].toFixed(1) + ' mi' : Math.round(a[3] * 60) + ' min'}</div>
+    <div class="meta">${a[0]} · ${a[3] ? a[3].toFixed(1) + ' h' : ''}${a[4] ? ' · ' + a[4] + ' bpm' : ''}</div>
+  </div>`).join('') || '<div class="note">No sessions yet.</div>';
+const week = curWeek ? curWeek.week : 0;
+document.getElementById('planprog').style.width = Math.round(100 * week / 16) + '%';
+document.getElementById('planprog-note').textContent =
+  week ? `Week ${week} of 16 — ${curPlan.phase} phase` : 'Plan not started';
+document.getElementById('planprog-hint').textContent = raceStart
+  ? 'Race: ' + new Date(new Date(raceStart+'T00:00').getTime()+6*864e5).toDateString()
+  : 'Set race date: seed_plan.py YYYY-MM-DD';
 
 if (D.pmc.length)
   lineChart(document.getElementById('pmc'), [
@@ -763,21 +913,20 @@ document.getElementById('plantable').innerHTML =
     <td class="key">${p.key}</td></tr>`).join('');
 
 // ---- statistics page ----
-const ACTS = D.acts;   // [date, sport, km, hours, hr]
+const ACTS = D.acts;   // [date, sport, mi, hours, hr, hour, tss]
 const YEARS = [...new Set(ACTS.map(a => +a[0].slice(0, 4)))].sort();
 const SPORTS = [...new Set(ACTS.map(a => a[1]))]
   .sort((a, b) => Object.keys(SPORT_COLOR).indexOf(a) - Object.keys(SPORT_COLOR).indexOf(b));
-const st = {metric: 'mi', group: 'sport', sport: 'run',
+const st = {metric: 'mi', grain: 'month',
             y0: YEARS[0], y1: YEARS[YEARS.length - 1], on: new Set(SPORTS)};
-const M = {mi: {i: 2, fmt: v => v.toFixed(1), unit: ' mi', min: 0.12},
-           hours: {i: 3, fmt: v => v.toFixed(1), unit: ' h', min: 0.05},
-           hr: {i: 4, fmt: v => v.toFixed(0), unit: ' bpm', min: 60}};
+// metric: i = column in ACTS (null = count), agg over sessions
+const M = {mi:    {i: 2, fmt: v => v >= 100 ? v.toFixed(0) : v.toFixed(1), unit: ' mi'},
+           hours: {i: 3, fmt: v => v >= 100 ? v.toFixed(0) : v.toFixed(1), unit: ' h'},
+           n:     {i: null, fmt: v => v.toFixed(0), unit: ''},
+           tss:   {i: 6, fmt: v => v.toFixed(0), unit: ''}};
 const y0s = document.getElementById('st-y0'), y1s = document.getElementById('st-y1');
 YEARS.forEach(y => { y0s.add(new Option(y, y)); y1s.add(new Option(y, y)); });
 y0s.value = st.y0; y1s.value = st.y1;
-const spsel = document.getElementById('st-sportsel');
-SPORTS.forEach(s => spsel.add(new Option(s, s)));
-spsel.value = st.sport;
 const chips = document.getElementById('st-chips');
 SPORTS.forEach(s => {
   const c = document.createElement('span');
@@ -786,49 +935,98 @@ SPORTS.forEach(s => {
     c.classList.toggle('on'); renderStats(); };
   chips.append(c);
 });
-['st-metric', 'st-group', 'st-sportsel', 'st-y0', 'st-y1'].forEach(id =>
+['st-metric', 'st-grain', 'st-y0', 'st-y1'].forEach(id =>
   document.getElementById(id).addEventListener('change', () => {
     st.metric = document.getElementById('st-metric').value;
-    st.group = document.getElementById('st-group').value;
-    st.sport = spsel.value;
+    st.grain = document.getElementById('st-grain').value;
     st.y0 = +y0s.value; st.y1 = +y1s.value;
-    document.getElementById('st-sportsel-wrap').style.display =
-      st.group === 'sport_year' ? '' : 'none';
     renderStats();
   }));
 
+const val = (a, m) => m.i === null ? 1 : (a[m.i] || 0);
+
 function renderStats() {
   const m = M[st.metric];
-  let pool = ACTS.filter(a => {
-    const y = +a[0].slice(0, 4), v = a[m.i];
-    return y >= st.y0 && y <= st.y1 && v != null && v >= m.min && st.on.has(a[1]);
+  const pool = ACTS.filter(a => {
+    const y = +a[0].slice(0, 4);
+    return y >= st.y0 && y <= st.y1 && st.on.has(a[1]);
   });
-  let groups;
-  if (st.group === 'sport') {
-    groups = SPORTS.filter(s => st.on.has(s)).map(s => ({
-      label: s, color: SPORT_COLOR[s] || '--s6',
-      vals: pool.filter(a => a[1] === s).map(a => a[m.i])}));
-  } else if (st.group === 'year') {
-    groups = YEARS.filter(y => y >= st.y0 && y <= st.y1).map(y => ({
-      label: '' + y, color: '--s1',
-      vals: pool.filter(a => +a[0].slice(0, 4) === y).map(a => a[m.i])}));
-  } else {
-    groups = YEARS.filter(y => y >= st.y0 && y <= st.y1).map(y => ({
-      label: `${st.sport} ${y}`, color: SPORT_COLOR[st.sport] || '--s1',
-      vals: pool.filter(a => a[1] === st.sport && +a[0].slice(0, 4) === y).map(a => a[m.i])}));
-  }
-  groups = groups.filter(g => g.vals.length >= 3)
-                 .map(g => ({...g, stats: quartiles(g.vals)}));
-  boxplot(document.getElementById('boxplot'), groups, {fmt: m.fmt, unit: m.unit});
+  const sportsOn = SPORTS.filter(s => st.on.has(s));
+
+  // 1) stacked volume over time
+  const keyOf = a => st.grain === 'month' ? a[0].slice(0, 7) : a[0].slice(0, 4);
+  const perKey = {};
+  pool.forEach(a => {
+    const k = keyOf(a);
+    (perKey[k] = perKey[k] || {})[a[1]] = (perKey[k][a[1]] || 0) + val(a, m);
+  });
+  const keys = Object.keys(perKey).sort();
+  stackedBars(document.getElementById('st-volume'),
+    keys.map(k => ({label: st.grain === 'month' ? k.slice(2) : k,
+      segs: sportsOn.map(s => ({name: s, color: SPORT_COLOR[s] || '--s6',
+                                val: perKey[k][s] || 0}))})),
+    {fmt: m.fmt, unit: m.unit});
+  document.getElementById('st-vol-legend').innerHTML = sportsOn.map(s =>
+    `<span><span class="sw" style="background:var(${SPORT_COLOR[s] || '--s6'})"></span>${s}</span>`).join('');
+
+  // 2) year-over-year cumulative lines (5 most recent years in range)
+  const yoyYears = YEARS.filter(y => y >= st.y0 && y <= st.y1).slice(-5);
+  const YO_COLORS = ['--s1', '--s2', '--s3', '--s5', '--s6'];
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const series = yoyYears.map((y, i) => {
+    const perM = Array(12).fill(0);
+    pool.forEach(a => { if (+a[0].slice(0, 4) === y) perM[+a[0].slice(5, 7) - 1] += val(a, m); });
+    let acc = 0;
+    const lastM = y === +D.generated.slice(0, 4) ? +D.generated.slice(5, 7) - 1 : 11;
+    return {name: '' + y, color: YO_COLORS[i],
+      pts: MONTHS.map((mo, mi2) => [mo, mi2 <= lastM ? (acc += perM[mi2]) : null])};
+  });
+  const yoyMount = document.getElementById('st-yoy');
+  yoyMount.innerHTML = '';
+  if (series.length) lineChart(yoyMount, series, {h: 230, fmt: m.fmt, xscale: 'cat'});
+
+  // 3) session-size histogram
+  const sizes = pool.map(a => val(a, {i: st.metric === 'n' ? 2 : m.i}))
+                    .filter(v => v > 0);
+  const histMount = document.getElementById('st-hist');
+  if (sizes.length) {
+    const cap = sizes.slice().sort((a, b) => a - b)[Math.floor(sizes.length * .98)] || 1;
+    const step = cap > 40 ? 10 : cap > 16 ? 4 : cap > 8 ? 2 : cap > 3 ? 1 : 0.5;
+    const nb = Math.max(1, Math.ceil(cap / step));
+    const buckets = Array(nb + 1).fill(0);
+    sizes.forEach(v => buckets[Math.min(nb, Math.floor(v / step))]++);
+    const bu = st.metric === 'n' ? ' mi' : m.unit;
+    barsSimple(histMount,
+      buckets.map((v, i) => ({label: i === nb ? (i*step) + '+' : '' + (i*step), val: v})),
+      {tip: L => `${L}${bu.trim() ? ' ' + bu.trim() : ''} bucket`});
+  } else histMount.innerHTML = '<div class="note">No sessions in this slice.</div>';
+
+  // 4) when-you-train heatmap
+  const counts = Array.from({length: 7}, () => Array(24).fill(0));
+  pool.forEach(a => {
+    const dow = (new Date(a[0] + 'T12:00').getDay() + 6) % 7;   // Mon=0
+    const hr = a[5] == null ? 12 : a[5];
+    counts[dow][Math.max(0, Math.min(23, hr))]++;
+  });
+  heatGrid(document.getElementById('st-heat'), counts);
+
+  // 5) summary table by sport
   document.getElementById('st-table').innerHTML =
-    `<tr><th>Group</th><th>Sessions</th><th>Total</th><th>Mean</th>
-     <th>Median</th><th>Middle 50%</th><th>Max</th><th>Outliers</th></tr>` +
-    groups.map(g => { const s = g.stats;
-      return `<tr><td class="key">${g.label}</td><td>${s.n}</td>
-        <td>${m.fmt(g.vals.reduce((a, b) => a + b, 0))}${m.unit}</td>
-        <td>${m.fmt(s.mean)}${m.unit}</td><td>${m.fmt(s.med)}${m.unit}</td>
-        <td>${m.fmt(s.q1)}–${m.fmt(s.q3)}${m.unit}</td>
-        <td>${m.fmt(s.max)}${m.unit}</td><td>${s.out.length}</td></tr>`; }).join('');
+    `<tr><th>Sport</th><th>Sessions</th><th>Total mi</th><th>Total h</th>
+     <th>Median mi</th><th>Longest mi</th><th>Avg HR</th><th>Total TSS</th></tr>` +
+    sportsOn.map(s => {
+      const rows2 = pool.filter(a => a[1] === s);
+      if (!rows2.length) return '';
+      const mis = rows2.map(a => a[2] || 0).filter(v => v > 0);
+      const hrs2 = rows2.map(a => a[4]).filter(Boolean);
+      return `<tr><td class="key">${s}</td><td>${rows2.length}</td>
+        <td>${Math.round(rows2.reduce((t, a) => t + (a[2] || 0), 0)).toLocaleString()}</td>
+        <td>${Math.round(rows2.reduce((t, a) => t + (a[3] || 0), 0)).toLocaleString()}</td>
+        <td>${mis.length ? median(mis).toFixed(1) : '—'}</td>
+        <td>${mis.length ? Math.max(...mis).toFixed(1) : '—'}</td>
+        <td>${hrs2.length ? Math.round(hrs2.reduce((t, v) => t + v, 0) / hrs2.length) : '—'}</td>
+        <td>${Math.round(rows2.reduce((t, a) => t + (a[6] || 0), 0)).toLocaleString()}</td></tr>`;
+    }).join('');
 }
 renderStats();
 
